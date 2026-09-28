@@ -4,6 +4,9 @@
 #include "nwdaf_config.hpp"
 #include "nwdaf_ratelimit.hpp"
 #include "nwdaf_sbi.hpp"
+#ifdef NWDAF_USE_HTTP2
+#include "nwdaf_h2_server.hpp"
+#endif
 #include <httplib.h>
 #include <atomic>
 #include <map>
@@ -27,6 +30,10 @@ public:
 
     void start();
     void stop();
+
+    // H1.8: "rel18-sbi" when the 3GPP interfaces are served over HTTP/2,
+    // "dev-legacy" (explicitly transport non-compliant) otherwise.
+    static const char* transportProfile(const NwdafConfig& config);
 
     // PROD-03: notification counters incremented by NwdafNotifier
     std::atomic<uint64_t> notif_total_{0};
@@ -59,6 +66,9 @@ private:
 
     // H1.7: adapts an httplib request to the transport-agnostic 3GPP service.
     void handle3gpp(const httplib::Request&, httplib::Response&);
+    // Rate limiting, the OAuth check and 3GPP dispatch, shared by the HTTP/1.1
+    // and HTTP/2 listeners.
+    SbiResponse serve3gpp(const SbiRequest& req, const std::string& remote_addr);
 
     NwdafAnalyticsEngine&   engine_;
     NwdafSubscriptionStore& subs_;
@@ -66,6 +76,9 @@ private:
 
     // H1.7: 3GPP Nnwdaf_AnalyticsInfo / Nnwdaf_EventsSubscription (TS 29.520)
     NwdafSbiService         sbi_;
+#ifdef NWDAF_USE_HTTP2
+    std::unique_ptr<NwdafH2Server> h2_;   // H1.8: 3GPP interfaces over HTTP/2
+#endif
 
     // PROD-06: per-IP + global token-bucket rate limiter
     RateLimiter rate_limiter_;

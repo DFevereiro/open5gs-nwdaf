@@ -12,16 +12,25 @@
 #include "nwdaf_schema_validator.hpp"
 #include "nwdaf_subscription.hpp"
 #include "mock_open5gs.hpp"
+#include "nwdaf_http_client.hpp"
+#ifdef NWDAF_USE_HTTP2
+#include "nwdaf_h2_server.hpp"
+#endif
 #include <httplib.h>
 #include <chrono>
 #include <memory>
 #include <thread>
+#include <condition_variable>
+#include <map>
+#include <mutex>
+#include <optional>
 #include <cctype>
 #include <ctime>
 
 using json = nlohmann::json;
 
 static const int SBI_PORT = 17782;
+static const int H2_PORT  = 17784;   // H1.8: HTTP/2 listener of the test servers
 static const char* ANALYTICS = "/nnwdaf-analyticsinfo/v1/analytics";
 static const char* SUBS      = "/nnwdaf-eventssubscription/v1/subscriptions";
 
@@ -30,6 +39,7 @@ static NwdafConfig sbiConfig(const std::string& openapi_dir = NWDAF_3GPP_OPENAPI
     cfg.nf_instance_id = "sbi-test-uuid";
     cfg.plmn_mcc = "999"; cfg.plmn_mnc = "70";
     cfg.sbi_bind_address = "127.0.0.1"; cfg.sbi_port = SBI_PORT;
+    cfg.sbi_h2_port = H2_PORT;
     cfg.nf_service_names = {{"AMF","amfd"},{"SMF","smfd"},{"UPF","upfd"}};
     cfg.throughput_interfaces = {"ogstun"};
     cfg.supi_regex = "imsi-(\\d{15})";
@@ -96,14 +106,46 @@ static SbiServer& nfLoadServer() {
     return s;
 }
 
-static httplib::Client client() {
-    httplib::Client c("127.0.0.1", SBI_PORT);
-    c.set_connection_timeout(3, 0);
-    return c;
-}
+// Talks to the 3GPP interfaces as a Rel-18 consumer does: over HTTP/2 to the
+// h2 listener when the build has it (rel18-sbi profile), else HTTP/1.1
+// (dev-legacy). Every response asserts the protocol actually used.
+struct TestResponse {
+    int status = 0;
+    std::string body;
+    std::map<std::string, std::string> headers;   // lower-case names
+    int http_version = 0;
+    std::string get_header_value(std::string name) const {
+        for (auto& c : name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        auto it = headers.find(name);
+        return it == headers.end() ? std::string() : it->second;
+    }
+};
+using Result = std::optional<TestResponse>;
+
+struct TestClient {
+    Result Get(const std::string& path) { return send("GET", path, "", ""); }
+    Result Delete(const std::string& path) { return send("DELETE", path, "", ""); }
+    Result Post(const std::string& path, const std::string& body, const std::string& ct) {
+        return send("POST", path, body, ct);
+    }
+    Result Put(const std::string& path, const std::string& body, const std::string& ct) {
+        return send("PUT", path, body, ct);
+    }
+    Result send(const std::string& method, const std::string& path,
+                const std::string& body, const std::string& ct) {
+        const bool h2 = NwdafHttpClient::http2();
+        const std::string url = "http://127.0.0.1:" + std::to_string(h2 ? H2_PORT : SBI_PORT) + path;
+        auto r = NwdafHttpClient(NwdafConfig()).request(method, url, body, ct);
+        if (!r) return std::nullopt;
+        REQUIRE(r.http_version == (h2 ? 2 : 1));
+        return TestResponse{static_cast<int>(r.status), r.body, r.headers, r.http_version};
+    }
+};
+
+static TestClient client() { return {}; }
 
 // A 3GPP error response: status, problem+json, schema-valid, and the cause.
-static json requireProblem(const httplib::Result& res, int status, const std::string& cause) {
+static json requireProblem(const Result& res, int status, const std::string& cause) {
     REQUIRE(res);
     REQUIRE(res->status == status);
     REQUIRE(res->get_header_value("Content-Type") == "application/problem+json");
@@ -200,12 +242,13 @@ TEST_CASE("H1.7: unsupported methods on AnalyticsInfo are 405 with Allow") {
     auto res = client().Put(ANALYTICS, "{}", "application/json");
     REQUIRE(res);
     REQUIRE(res->status == 405);
-    REQUIRE(res->get_header_value("Allow") == "GET, POST");
+    REQUIRE(res->get_header_value("Allow") == "GET");
 }
 
-TEST_CASE("H1.7: the deprecated JSON-body POST on the AnalyticsInfo path still works") {
+TEST_CASE("H1.7: the deprecated JSON-body POST on the AnalyticsInfo path still works (operator port)") {
     (void)server();
-    auto res = client().Post(ANALYTICS, R"({"analyticsId":"NF_LOAD"})", "application/json");
+    httplib::Client legacy("127.0.0.1", SBI_PORT);
+    auto res = legacy.Post(ANALYTICS, R"({"analyticsId":"NF_LOAD"})", "application/json");
     REQUIRE(res);
     REQUIRE(res->status == 200);
 }
@@ -319,14 +362,14 @@ TEST_CASE("H1.7: without the official artifacts the 3GPP interfaces fail closed"
 
 static const std::string ANY_UE = R"({"anyUe":true})";
 
-static httplib::Result nfLoad(const std::string& extra = "", bool with_target = true) {
+static Result nfLoad(const std::string& extra = "", bool with_target = true) {
     std::string path = std::string(ANALYTICS) + "?event-id=NF_LOAD";
     if (with_target) path += "&tgt-ue=" + q(ANY_UE);
     return client().Get(path + extra);
 }
 
 // A 200 AnalyticsData response, validated against the official schema.
-static json requireAnalyticsData(const httplib::Result& res) {
+static json requireAnalyticsData(const Result& res) {
     REQUIRE(res);
     INFO(res->body);
     REQUIRE(res->status == 200);
@@ -443,7 +486,7 @@ static json nfLoadSub(json evt_req = json(), json extra = json::object()) {
 }
 
 // A 200/201 NnwdafEventsSubscription body, validated against the official schema.
-static json requireSubscription(const httplib::Result& res, int status) {
+static json requireSubscription(const Result& res, int status) {
     REQUIRE(res);
     INFO(res->body);
     REQUIRE(res->status == status);
@@ -460,7 +503,9 @@ TEST_CASE("H1.7: Subscribe to NF_LOAD → 201 with Location and the negotiated f
     auto res = client().Post(SUBS, nfLoadSub().dump(), "application/json");
     json body = requireSubscription(res, 201);
     const std::string loc = res->get_header_value("Location");
-    const std::string prefix = "http://127.0.0.1:" + std::to_string(SBI_PORT) + SUBS + "/";
+    // {apiRoot} as the consumer addressed the NWDAF — the HTTP/2 port under H1.8.
+    const int port = NwdafHttpClient::http2() ? H2_PORT : SBI_PORT;
+    const std::string prefix = "http://127.0.0.1:" + std::to_string(port) + SUBS + "/";
     REQUIRE(loc.rfind(prefix, 0) == 0);
     const std::string id = loc.substr(prefix.size());
     REQUIRE(srv.subs.exists(id));
@@ -547,28 +592,64 @@ TEST_CASE("H1.7: operator-API subscriptions are not Rel-18 resources") {
 
 #ifdef NWDAF_ENABLE_PUSH_DELIVERY
 #include "nwdaf_notifier.hpp"
-#include <condition_variable>
-#include <mutex>
+
+// A notification consumer on port 17790 recording what it receives. It speaks
+// HTTP/2 when the build does (H1.8: Rel-18 notifications go over HTTP/2), and
+// HTTP/1.1 otherwise.
+struct MockConsumer {
+    std::mutex m;
+    std::condition_variable cv;
+    std::vector<json> received;
+    std::string callback, content_type;   // of the first notification
+
+    void record(const std::string& body, const std::string& cb, const std::string& ct) {
+        std::lock_guard<std::mutex> lk(m);
+        if (received.empty()) { callback = cb; content_type = ct; }
+        received.push_back(json::parse(body));
+        cv.notify_all();
+    }
+#ifdef NWDAF_USE_HTTP2
+    NwdafH2Server server{[] { NwdafH2Server::Options o; o.port = 17790; return o; }(),
+        [this](const SbiRequest& req, const std::string&) {
+            auto h = [&](const char* k) { auto it = req.headers.find(k);
+                                          return it == req.headers.end() ? std::string() : it->second; };
+            record(req.body, h("3gpp-sbi-callback"), h("content-type"));
+            return SbiResponse{204, "", "", {}};
+        }};
+    MockConsumer() { server.start(); }
+    ~MockConsumer() { server.stop(); }
+#else
+    httplib::Server server;
+    std::thread thread;
+    MockConsumer() {
+        server.Post("/notify", [this](const httplib::Request& req, httplib::Response& res) {
+            record(req.body, req.get_header_value("3gpp-Sbi-Callback"),
+                   req.get_header_value("Content-Type"));
+            res.status = 204;
+        });
+        thread = std::thread([this] { server.listen("127.0.0.1", 17790); });
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    ~MockConsumer() {
+        server.stop();
+        thread.join();
+    }
+#endif
+    // Waits until at least n notifications arrived or the timeout passed.
+    size_t waitFor(size_t n, std::chrono::seconds timeout) {
+        std::unique_lock<std::mutex> lk(m);
+        cv.wait_for(lk, timeout, [&] { return received.size() >= n; });
+        return received.size();
+    }
+    size_t count() {
+        std::lock_guard<std::mutex> lk(m);
+        return received.size();
+    }
+};
 
 TEST_CASE("H1.7: NF_LOAD notifications are Rel-18 NnwdafEventsSubscriptionNotification") {
     auto& srv = nfLoadServer();
-
-    // A consumer that records the first notification it receives.
-    std::mutex m;
-    std::condition_variable cv;
-    std::string body, callback, content_type;
-    httplib::Server consumer;
-    consumer.Post("/notify", [&](const httplib::Request& req, httplib::Response& res) {
-        std::lock_guard<std::mutex> lk(m);
-        if (body.empty()) {
-            body = req.body;
-            callback = req.get_header_value("3gpp-Sbi-Callback");
-            content_type = req.get_header_value("Content-Type");
-        }
-        res.status = 204;
-        cv.notify_all();
-    });
-    std::thread consumer_thread([&] { consumer.listen("127.0.0.1", 17790); });
+    MockConsumer consumer;
 
     // ONE_TIME: one report, then the subscription ends.
     auto created = client().Post(SUBS, nfLoadSub({{"notifMethod", "ONE_TIME"}}).dump(),
@@ -580,18 +661,12 @@ TEST_CASE("H1.7: NF_LOAD notifications are Rel-18 NnwdafEventsSubscriptionNotifi
 
     NwdafNotifier notifier(srv.subs, srv.engine, 1, nullptr, nullptr, srv.cfg);
     notifier.start();
-    {
-        std::unique_lock<std::mutex> lk(m);
-        cv.wait_for(lk, std::chrono::seconds(8), [&] { return !body.empty(); });
-    }
+    REQUIRE(consumer.waitFor(1, std::chrono::seconds(8)) == 1);
     notifier.stop();
-    consumer.stop();
-    consumer_thread.join();
 
-    REQUIRE_FALSE(body.empty());
-    REQUIRE(callback == "Nnwdaf_EventsSubscription_Notify");
-    REQUIRE(content_type == "application/json");
-    json n = json::parse(body);
+    REQUIRE(consumer.callback == "Nnwdaf_EventsSubscription_Notify");
+    REQUIRE(consumer.content_type == "application/json");
+    const json n = consumer.received.front();
     static NwdafSchemaValidator official(NWDAF_3GPP_OPENAPI_DIR);
     auto v = official.validate(
         n, "TS29520_Nnwdaf_EventsSubscription.yaml#/components/schemas/NnwdafEventsSubscriptionNotification");
@@ -612,40 +687,7 @@ TEST_CASE("H1.7: Subscribe asking for past NF_LOAD statistics is UNAVAILABLE_DAT
 }
 
 #ifdef NWDAF_ENABLE_PUSH_DELIVERY
-// Records every notification POSTed to /notify on port 17790.
-struct MockConsumer {
-    httplib::Server server;
-    std::thread thread;
-    std::mutex m;
-    std::condition_variable cv;
-    std::vector<json> received;
-
-    MockConsumer() {
-        server.Post("/notify", [this](const httplib::Request& req, httplib::Response& res) {
-            std::lock_guard<std::mutex> lk(m);
-            received.push_back(json::parse(req.body));
-            res.status = 204;
-            cv.notify_all();
-        });
-        thread = std::thread([this] { server.listen("127.0.0.1", 17790); });
-    }
-    ~MockConsumer() {
-        server.stop();
-        thread.join();
-    }
-    // Waits until at least n notifications arrived or the timeout passed.
-    size_t waitFor(size_t n, std::chrono::seconds timeout) {
-        std::unique_lock<std::mutex> lk(m);
-        cv.wait_for(lk, timeout, [&] { return received.size() >= n; });
-        return received.size();
-    }
-    size_t count() {
-        std::lock_guard<std::mutex> lk(m);
-        return received.size();
-    }
-};
-
-static std::string createdId(const httplib::Result& res) {
+static std::string createdId(const Result& res) {
     REQUIRE(res);
     INFO(res->body);
     REQUIRE(res->status == 201);
@@ -672,7 +714,9 @@ TEST_CASE("H1.7: PERIODIC notifications repeat and stop at maxReportNbr") {
 TEST_CASE("H1.7: a subscription ends when monDur elapses") {
     auto& srv = nfLoadServer();
     MockConsumer consumer;
-    const auto end = std::chrono::system_clock::now() + std::chrono::seconds(2);
+    // monDur has one-second resolution: allow for truncation plus the
+    // notifier's first poll, so at least one report precedes expiry.
+    const auto end = std::chrono::system_clock::now() + std::chrono::seconds(4);
     const auto t = std::chrono::system_clock::to_time_t(end);
     char mon_dur[32];
     std::strftime(mon_dur, sizeof(mon_dur), "%Y-%m-%dT%H:%M:%SZ", std::gmtime(&t));
@@ -681,7 +725,7 @@ TEST_CASE("H1.7: a subscription ends when monDur elapses") {
 
     NwdafNotifier notifier(srv.subs, srv.engine, 1, nullptr, nullptr, srv.cfg);
     notifier.start();
-    std::this_thread::sleep_for(std::chrono::seconds(5));
+    std::this_thread::sleep_for(std::chrono::seconds(7));
     notifier.stop();
 
     REQUIRE(consumer.count() >= 1);            // reported while monitoring …
@@ -709,5 +753,35 @@ TEST_CASE("H1.7: notifications apply the subscription's filters and omit events 
     REQUIRE(infos.size() == 1);
     REQUIRE(infos[0]["nfType"] == "UPF");
     REQUIRE_FALSE(n["eventNotifications"][0].contains("failNotifyCode"));
+}
+#endif
+
+// ── H1.8: transport ─────────────────────────────────────────────────────────
+
+TEST_CASE("H1.8: /health reports the SBI transport profile") {
+    (void)server();
+    httplib::Client op("127.0.0.1", SBI_PORT);
+    auto res = op.Get("/nwdaf-analytics/v1/health");
+    REQUIRE(res);
+    REQUIRE(json::parse(res->body)["sbiTransportProfile"] ==
+            (NwdafHttpClient::http2() ? "rel18-sbi" : "dev-legacy"));
+}
+
+#ifdef NWDAF_USE_HTTP2
+TEST_CASE("H1.8: the 3GPP interfaces are served over HTTP/2 (h2c prior knowledge)") {
+    (void)server();
+    auto res = client().Get(std::string(ANALYTICS) + "?event-id=NF_LOAD");
+    REQUIRE(res);
+    REQUIRE(res->http_version == 2);
+    REQUIRE(res->status == 400);
+}
+
+TEST_CASE("H1.8: the HTTP/2 listener does not accept HTTP/1.1") {
+    (void)server();
+    httplib::Client h1("127.0.0.1", H2_PORT);
+    h1.set_connection_timeout(2, 0);
+    h1.set_read_timeout(2, 0);
+    auto res = h1.Get(std::string(ANALYTICS) + "?event-id=NF_LOAD");
+    REQUIRE_FALSE(res);
 }
 #endif

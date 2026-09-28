@@ -170,6 +170,7 @@ sudo apt-get install -y --no-install-recommends \
     libsystemd-dev \    # journald collection      (NWDAF_USE_SD_JOURNAL=ON)
     libssl-dev \        # TLS on the SBI            (NWDAF_USE_TLS=ON, needs OpenSSL ≥ 3.0)
     libsqlite3-dev \    # restart-safe persistence  (history_backend=sqlite)
+    libnghttp2-dev libcurl4-openssl-dev \   # HTTP/2 SBI (NWDAF_USE_HTTP2=ON; needed to register with an Open5GS NRF)
     libmongoc-dev libmongocxx-dev   # subscriber count via MongoDB
 ```
 
@@ -258,7 +259,7 @@ Base URL: `http://<host>:7779`
 | `POST` | `/nnwdaf-eventssubscription/v1/subscriptions` | `Nnwdaf_EventsSubscription` Subscribe. Returns `201` + `Location`. |
 | `PUT` / `DELETE` | `/nnwdaf-eventssubscription/v1/subscriptions/{subscriptionId}` | Modify / Unsubscribe |
 
-Notifications are `NnwdafEventsSubscriptionNotification` bodies, sent with `3gpp-Sbi-Callback: Nnwdaf_EventsSubscription_Notify`. The transport is still HTTP/1.1; HTTP/2 is roadmap H1.8.
+These are served over **HTTP/2** on `sbi_h2_port` (default 7780): h2c with prior knowledge, or h2 over TLS. For example, `curl --http2-prior-knowledge "http://127.0.0.1:7780/nnwdaf-analyticsinfo/v1/analytics?event-id=NF_LOAD&tgt-ue=%7B%22anyUe%22%3Atrue%7D"`. Notifications are `NnwdafEventsSubscriptionNotification` bodies, sent over HTTP/2 with `3gpp-Sbi-Callback: Nnwdaf_EventsSubscription_Notify`.
 
 ### Examples
 
@@ -289,7 +290,8 @@ Everything deployment-specific lives in [`config/nwdaf.yaml`](config/nwdaf.yaml)
 |---|---|---|
 | `nf_instance_id` | — | **Mandatory.** Stable UUID of this NF instance |
 | `plmn_mcc` / `plmn_mnc` | `999` / `70` | PLMN (test network default) |
-| `sbi_bind_address` / `sbi_port` | `127.0.0.1` / `7779` | SBI endpoint (must not collide with Open5GS's 7777) |
+| `sbi_bind_address` / `sbi_port` | `127.0.0.1` / `7779` | Operator API and dashboard, over HTTP/1.1. Must not collide with Open5GS's 7777. |
+| `sbi_h2_port` | `7780` | The 3GPP interfaces over HTTP/2 (TS 29.500 §5.2). This is the endpoint registered with the NRF. `0` disables it. |
 | `nf_service_names` | `AMF→amfd`, … | Open5GS systemd unit suffix map |
 | `nf_instance_ids` | — | NF type → the NF's real `nfInstanceId`. Required for Rel-18 NF_LOAD on the 3GPP interfaces, which is advertised only when this is set. |
 | `throughput_interfaces` | `ogstun` | UPF tunnel interfaces to sample |
@@ -314,6 +316,8 @@ Everything deployment-specific lives in [`config/nwdaf.yaml`](config/nwdaf.yaml)
 |---|---|---|
 | `NWDAF_USE_SD_JOURNAL` | `ON` | journald collection via libsystemd |
 | `NWDAF_USE_TLS` | `ON` | TLS on SBI (OpenSSL) |
+| `NWDAF_USE_HTTP2` | `ON` | HTTP/2 for the 3GPP interfaces and the NRF (nghttp2, libcurl). `OFF` gives the `dev-legacy` profile, which is HTTP/1.1 only and transport non-compliant; the Open5GS NRF also rejects HTTP/1.1. |
+| `NWDAF_REQUIRE_REL18_PROFILE` | `OFF` | Fail the configure unless HTTP/2 and TLS are both enabled |
 | `NWDAF_ENABLE_PUSH_DELIVERY` | `ON` | Subscription push-notification thread |
 | `NWDAF_BUILD_TESTS` | `ON` | Catch2 unit + integration tests |
 

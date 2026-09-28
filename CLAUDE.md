@@ -32,7 +32,7 @@ cd build && ctest -R "GET /health" --output-on-failure
 curl http://127.0.0.1:7779/nwdaf-analytics/v1/health
 ```
 
-**Newer toolchains fail on the pinned dependencies.** With GCC ≥ 16 or CMake ≥ 4, the pinned yaml-cpp 0.8.0 and spdlog (bundled fmt) fail under this project's flags: a missing `<cstdint>`, and `-Werror=dangling-reference`. CMake 4 also needs `-DCMAKE_POLICY_VERSION_MINIMUM=3.5`. Verify on the CI platform instead, for example `podman run --rm -v "$PWD":/src:ro,Z ubuntu:22.04 …`, following the steps in `ci.yml`.
+**Newer toolchains fail on the pinned dependencies.** With GCC ≥ 16 or CMake ≥ 4, the pinned yaml-cpp 0.8.0 and spdlog (bundled fmt) fail under this project's flags: a missing `<cstdint>`, and `-Werror=dangling-reference`. CMake 4 also needs `-DCMAKE_POLICY_VERSION_MINIMUM=3.5`. Verify on the CI platform instead, for example `docker run --rm --user "$(id -u):$(id -g)" -v "$PWD":/src:ro,Z ubuntu:22.04 …` (as your user, so build output is not root-owned), following the steps in `ci.yml`.
 
 The build uses `-Wall -Wextra -Werror`, so any warning fails the build. Fix warnings; don't suppress them. CI (`.github/workflows/ci.yml`) builds the full and minimal profiles on Ubuntu 22.04 and 20.04 (20.04 always has TLS off), then builds the Docker image. A change must compile under both the full and the minimal flag sets.
 
@@ -119,6 +119,11 @@ IDs use the Rel-18 `NwdafEvent` spelling (`QOS_SUSTAINABILITY`, `RED_TRANS_EXP`)
   - `src/nwdaf_supported_features.cpp` holds the TS 29.571 bitmask and the per-API TS 29.520 feature numbers. The same feature has different bit numbers in each API.
   - Rules taken from the spec prose, and interpretations I-1..I-3, are pinned in the compliance doc's Appendix A. Cite them there instead of re-deriving them.
 - **Official YAML files:** `cmake/Nwdaf3gppOpenApi.cmake` downloads the 106 official YAML files at configure time from the pinned commit and verifies them against `cmake/3gpp_openapi_manifest.cmake`, so configure needs network access. Set `-DNWDAF_3GPP_OPENAPI_SOURCE_DIR=<dir>` for an offline copy; it is still hash-checked. The files are "All rights reserved", so never commit them.
+- **HTTP/2 (H1.8):**
+  - The 3GPP interfaces are served by `NwdafH2Server` (nghttp2) on `sbi_h2_port` (7780). Port 7779 stays HTTP/1.1 for the operator API.
+  - Outbound NRF traffic and Rel-18 notifications go through `NwdafHttpClient` (libcurl h2c/h2). Operator-API notifications stay on httplib.
+  - `tests/test_3gpp_sbi.cpp` talks to the HTTP/2 listener when the build has `NWDAF_USE_HTTP2`, and asserts the protocol version. Test servers that don't need HTTP/2 set `sbi_h2_port = 0`.
+  - The Open5GS NRF rejects HTTP/1.1, so a `NWDAF_USE_HTTP2=OFF` build cannot register with it.
 - **Spec texts:** the 3GPP FTP archive refuses automated access. Use the ETSI publications (`etsi.org/deliver/etsi_ts/1295xx_…`, ETSI TS 1xx xxx = TS xx.xxx).
 - **Advertisement** (NRF `nwdafInfo`) reflects implemented and configured capability only, never transient data availability.
 

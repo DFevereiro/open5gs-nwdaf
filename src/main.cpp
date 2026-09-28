@@ -3,6 +3,7 @@
 #include "nwdaf_analytics.hpp"
 #include "nwdaf_server.hpp"
 #include "nwdaf_subscription.hpp"
+#include "nwdaf_http_client.hpp"
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
@@ -93,29 +94,6 @@ static void setupLogging(const NwdafConfig& cfg) {
     spdlog::set_default_logger(logger);
 }
 
-static std::unique_ptr<httplib::Client> createHttpClient(const NwdafConfig& cfg,
-                                                        const std::string& uri) {
-#ifdef NWDAF_USE_TLS
-    if (uri.find("https://") == 0) {
-        // H1.10: verify the NRF's certificate (TS 33.501 §13.1) — against the
-        // configured CA when there is one, else the system trust store — and
-        // present this NF's certificate so an mTLS-enforcing NRF accepts us.
-        auto cli = cfg.tls_enabled
-            ? std::make_unique<httplib::Client>(uri, cfg.tls_cert_file, cfg.tls_key_file)
-            : std::make_unique<httplib::Client>(uri);
-        cli->enable_server_certificate_verification(true);
-        if (!cfg.tls_ca_file.empty()) cli->set_ca_cert_path(cfg.tls_ca_file.c_str());
-        cli->set_connection_timeout(3, 0);
-        return cli;
-    }
-#else
-    (void)cfg;
-#endif
-    auto cli = std::make_unique<httplib::Client>(uri);
-    cli->set_connection_timeout(3, 0);
-    return cli;
-}
-
 static bool registerWithNrf(const NwdafConfig& cfg) {
     using json = nlohmann::json;
     json body = {
@@ -129,20 +107,27 @@ static bool registerWithNrf(const NwdafConfig& cfg) {
             {"serviceInstanceId", "nwdaf-analytics-1"},
             {"serviceName",       "nnwdaf-analyticsinfo"},
             {"versions",          {{{"apiVersionInUri", "v1"}, {"apiFullVersion", "1.0.0"}}}},
-            {"scheme",            "http"},
+            // H1.8: the 3GPP interfaces are served on the HTTP/2 listener when
+            // there is one; the full Rel-18 profile is roadmap H1.9.
+            {"scheme",            cfg.tls_enabled ? "https" : "http"},
             {"nfServiceStatus",   "REGISTERED"},
-            {"ipEndPoints",       {{{"ipv4Address", cfg.sbi_bind_address}, {"port", cfg.sbi_port}}}}
+            {"ipEndPoints",       {{{"ipv4Address", cfg.sbi_bind_address},
+                                    {"port", NwdafHttpClient::http2() && cfg.sbi_h2_port > 0
+                                                 ? cfg.sbi_h2_port : cfg.sbi_port}}}}
         }}}
     };
     
-    auto cli = createHttpClient(cfg, cfg.nrf_uri);
-    std::string path = "/nnrf-nfm/v1/nf-instances/" + cfg.nf_instance_id;
-    
-    auto res = cli->Put(path.c_str(), body.dump(), "application/json");
-    if (res && (res->status == 201 || res->status == 200)) {
-        spdlog::info("NRF registration successful ({} {})", res->status, res->status == 201 ? "Created" : "OK");
+    // H1.8: HTTP/2 towards the NRF (TS 29.500 §5.2); the Open5GS NRF does not
+    // accept HTTP/1.1.
+    const NwdafHttpClient http(cfg);
+    const std::string url = cfg.nrf_uri + "/nnrf-nfm/v1/nf-instances/" + cfg.nf_instance_id;
+
+    auto res = http.request("PUT", url, body.dump(), "application/json");
+    if (res && (res.status == 201 || res.status == 200)) {
+        spdlog::info("NRF registration successful ({} {}, HTTP/{})", res.status,
+                     res.status == 201 ? "Created" : "OK", res.http_version);
         try {
-            auto res_json = json::parse(res->body);
+            auto res_json = json::parse(res.body);
             if (res_json.contains("heartBeatTimer")) {
                 g_heartbeat_interval = res_json["heartBeatTimer"].get<int>();
                 spdlog::info("Updated heartbeat interval to {}s from NRF", g_heartbeat_interval.load());
@@ -150,8 +135,8 @@ static bool registerWithNrf(const NwdafConfig& cfg) {
         } catch (...) {}
         return true;
     } else {
-        int status = res ? res->status : -1;
-        spdlog::warn("NRF registration failed (status {})", status);
+        spdlog::warn("NRF registration failed ({})",
+                     res ? "HTTP " + std::to_string(res.status) : res.error);
         return false;
     }
 }
@@ -218,9 +203,9 @@ int main(int argc, char* argv[]) {
         nrf_hb_thread = std::thread([&config]() {
             int elapsed = 0;
             int miss_count = 0;
-            auto cli = createHttpClient(config, config.nrf_uri);
-            std::string path = "/nnrf-nfm/v1/nf-instances/" + config.nf_instance_id;
-            
+            const NwdafHttpClient http(config);
+            const std::string url = config.nrf_uri + "/nnrf-nfm/v1/nf-instances/" + config.nf_instance_id;
+
             while (!g_shutdown) {
                 std::this_thread::sleep_for(std::chrono::seconds(1));
                 if (g_shutdown) break;
@@ -230,8 +215,8 @@ int main(int argc, char* argv[]) {
                     nlohmann::json patch = nlohmann::json::array();
                     patch.push_back({{"op", "replace"}, {"path", "/nfStatus"}, {"value", "REGISTERED"}});
                     
-                    auto res = cli->Patch(path.c_str(), patch.dump(), "application/json-patch+json");
-                    int status = res ? res->status : -1;
+                    auto res = http.request("PATCH", url, patch.dump(), "application/json-patch+json");
+                    int status = res ? static_cast<int>(res.status) : -1;
                     
                     if (status != 200 && status != 204) {
                         miss_count++;

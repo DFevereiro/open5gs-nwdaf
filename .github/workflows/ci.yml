@@ -20,13 +20,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # 22.04 ships OpenSSL 3.0, so TLS can be enabled here.
+          # 22.04 ships OpenSSL 3.0, so TLS can be enabled here. This is the
+          # main Rel-18 conformance job: HTTP/2 + TLS are required (H1.8), and
+          # the 3GPP test suite runs over HTTP/2.
           - profile: full
-            apt_optional: "libsystemd-dev libssl-dev libsqlite3-dev"
-            cmake_flags: "-DNWDAF_USE_SD_JOURNAL=ON -DNWDAF_USE_TLS=ON"
+            apt_optional: "libsystemd-dev libssl-dev libsqlite3-dev libnghttp2-dev libcurl4-openssl-dev"
+            cmake_flags: "-DNWDAF_USE_SD_JOURNAL=ON -DNWDAF_USE_TLS=ON -DNWDAF_USE_HTTP2=ON -DNWDAF_REQUIRE_REL18_PROFILE=ON"
+          # dev-legacy profile: HTTP/1.1 only (explicitly transport non-compliant).
           - profile: minimal
             apt_optional: ""
-            cmake_flags: "-DNWDAF_USE_SD_JOURNAL=OFF -DNWDAF_USE_TLS=OFF"
+            cmake_flags: "-DNWDAF_USE_SD_JOURNAL=OFF -DNWDAF_USE_TLS=OFF -DNWDAF_USE_HTTP2=OFF"
     steps:
       - uses: actions/checkout@v4
 
@@ -74,12 +77,14 @@ jobs:
           # 20.04 ships OpenSSL 1.1.1, which cpp-httplib's TLS support does not
           # accept (requires OpenSSL >= 3.0), so TLS is OFF here. sd-journal and
           # SQLite are still exercised.
+          # HTTP/2 is exercised here too; TLS cannot be, so this job is not
+          # eligible for the Rel-18 profile.
           - profile: full
-            apt_optional: "libsystemd-dev libsqlite3-dev"
-            cmake_flags: "-DNWDAF_USE_SD_JOURNAL=ON -DNWDAF_USE_TLS=OFF"
+            apt_optional: "libsystemd-dev libsqlite3-dev libnghttp2-dev libcurl4-openssl-dev"
+            cmake_flags: "-DNWDAF_USE_SD_JOURNAL=ON -DNWDAF_USE_TLS=OFF -DNWDAF_USE_HTTP2=ON"
           - profile: minimal
             apt_optional: ""
-            cmake_flags: "-DNWDAF_USE_SD_JOURNAL=OFF -DNWDAF_USE_TLS=OFF"
+            cmake_flags: "-DNWDAF_USE_SD_JOURNAL=OFF -DNWDAF_USE_TLS=OFF -DNWDAF_USE_HTTP2=OFF"
     env:
       DEBIAN_FRONTEND: noninteractive
     steps:

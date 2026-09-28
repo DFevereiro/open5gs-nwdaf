@@ -16,6 +16,7 @@ static NwdafConfig makeTestConfig() {
     cfg.nf_instance_id = "test-server-uuid";
     cfg.plmn_mcc = "999"; cfg.plmn_mnc = "70";
     cfg.sbi_bind_address = "127.0.0.1"; cfg.sbi_port = TEST_PORT;
+    cfg.sbi_h2_port = 0;
     cfg.nf_service_names = {{"AMF","amfd"},{"SMF","smfd"},{"UPF","upfd"},
                              {"AUSF","ausfd"},{"UDM","udmd"},{"PCF","pcfd"},{"NRF","nrfd"}};
     cfg.throughput_interfaces = {"ogstun"};

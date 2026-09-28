@@ -335,6 +335,13 @@ components:
         nfType:       { type: string, enum: [NWDAF] }
         nfInstanceId: { type: string }
         ts:           { type: string }
+        sbiTransportProfile:
+          type: string
+          description: |
+            H1.8: `rel18-sbi` when the 3GPP interfaces are served over HTTP/2
+            (TS 29.500 §5.2); `dev-legacy` when they are HTTP/1.1 only, which
+            is explicitly transport non-compliant.
+          enum: [rel18-sbi, dev-legacy]
         nfProfile:
           type: object
           required: [nfType, nfInstanceId, nwdafInfo]

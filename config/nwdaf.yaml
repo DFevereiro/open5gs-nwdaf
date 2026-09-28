@@ -4,7 +4,8 @@ nwdaf:
   plmn_mcc: "999"
   plmn_mnc: "70"
   sbi_bind_address: "127.0.0.1"
-  sbi_port: 7779              # Must not conflict with Open5GS NFs (port 7777)
+  sbi_port: 7779              # Operator API + dashboard (HTTP/1.1). Must not conflict with Open5GS (7777)
+  sbi_h2_port: 7780           # 3GPP interfaces over HTTP/2 (TS 29.500); 0 disables
 
   # Open5GS NF service names (systemd unit suffix after 'open5gs-')
   # Adjust for your Open5GS version if needed

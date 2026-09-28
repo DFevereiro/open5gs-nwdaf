@@ -17,6 +17,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl-dev \
     libsystemd-dev \
     libsqlite3-dev \
+    libnghttp2-dev \
+    libcurl4-openssl-dev \
     git \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -40,6 +42,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl3 \
     libsystemd0 \
     libsqlite3-0 \
+    libnghttp2-14 \
+    libcurl4 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /src/build/open5gs-nwdafd /usr/local/bin/open5gs-nwdafd

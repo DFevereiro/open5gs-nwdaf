@@ -124,9 +124,9 @@ interfaces: NF_LOAD, when `nf_instance_ids` is configured.**
 
 | Capability | Code | 3GPP reference | Current status | Rel-18 gap | Roadmap item | Required action |
 |---|---|---|---|---|---|---|
-| HTTP/2 on the SBI | cpp-httplib (HTTP/1.1) | TS 29.500 V18.10.0 §5.2 (verify) | Non-compliant | HTTP/1.1 only. | H1.8 | Add an nghttp2 server and a libcurl HTTP/2 client behind `NWDAF_USE_HTTP2`. |
-| Compliance profile | — | — | Not implemented | — | H1.8 | With HTTP/2 enabled, the build is the `rel18-sbi` profile, which is eligible for the claim. With HTTP/2 disabled, it is the `dev-legacy` profile, which is explicitly transport non-compliant. The main CI conformance jobs must run over HTTP/2. |
-| Interoperability with the Open5GS NRF | `registerWithNrf` in `src/main.cpp` | — | Requires verification | Open5GS SBI is HTTP/2-based, so registration over HTTP/1.1 is expected to fail against a real Open5GS NRF. | H1.8, H1.9 | Test manually and record the result under M1. |
+| HTTP/2 on the SBI | `NwdafH2Server` (`src/nwdaf_h2_server.cpp`, nghttp2) on `sbi_h2_port`; `NwdafHttpClient` (`src/nwdaf_http_client.cpp`, libcurl) for the NRF and Rel-18 notifications · tests: the whole `tests/test_3gpp_sbi.cpp` suite runs over HTTP/2 and asserts the protocol version on every response; "H1.8: the HTTP/2 listener does not accept HTTP/1.1"; `tests/test_sbi_security.cpp` "H1.8: h2 over TLS (ALPN) …" | TS 29.500 V18.10.0 §5.2 | Compliant (rel18-sbi profile) | h2c with prior knowledge, and h2 over TLS negotiated by ALPN. The operator API (port 7779) stays HTTP/1.1; it is not a 3GPP interface. For development, the 3GPP routes are also reachable over HTTP/1.1 on that port, but the NRF advertises the HTTP/2 endpoint only. | H1.8 | — |
+| Compliance profile | `NwdafServer::transportProfile`; CMake `NWDAF_USE_HTTP2`, `NWDAF_REQUIRE_REL18_PROFILE`; CI 22.04 full job · test `tests/test_3gpp_sbi.cpp` "H1.8: /health reports the SBI transport profile" | — | Compliant | `rel18-sbi` (HTTP/2) or `dev-legacy` (HTTP/1.1, explicitly transport non-compliant). The profile is logged at startup and reported on `/health`. The main CI job fails to configure without HTTP/2 and TLS. | H1.8 | — |
+| Interoperability with the Open5GS NRF | `registerWithNrf` and the heartbeat in `src/main.cpp`, over `NwdafHttpClient` | TS 29.510 V18.11.0 NFRegister, NFUpdate (heartbeat) | Compliant (transport) | Validated against Open5GS v2.8.0; see the interoperability records. The *content* of the NF profile is H1.9. | H1.8, H1.9 | — |
 
 ## 7. NRF interaction — TS 29.510 V18.11.0
 
@@ -146,10 +146,10 @@ interfaces: NF_LOAD, when `nf_instance_ids` is configured.**
 | Capability | Code | 3GPP reference | Current status | Rel-18 gap | Roadmap item | Required action |
 |---|---|---|---|---|---|---|
 | TLS on the SBI | `NwdafServer` constructor (`httplib::SSLServer`) | §13.1 (verify) | Partially compliant | Server-side TLS works. Mutual authentication doesn't (next row). | H1.10 | — |
-| Mutual TLS | `NwdafServer` constructor passes `tls_ca_file` to `httplib::SSLServer` · tests: `tests/test_sbi_security.cpp` ("H1.10: …", 5 cases) | §13.1 (verify) | Partially compliant | mTLS is implemented and tested on the HTTP/1.1 listener. It's opt-in: a non-empty `tls_ca_file` turns it on, and an unreadable CA stops startup. The HTTP/2 SBI listener doesn't exist yet. | H1.10, H1.8 | Apply the same client-CA verification to the HTTP/2 listener. |
+| Mutual TLS | `tls_ca_file` → `httplib::SSLServer` (operator port) and `NwdafH2Server` (HTTP/2 listener) · tests: `tests/test_sbi_security.cpp` ("H1.10: …" for HTTP/1.1; "H1.8: h2 over TLS (ALPN) with a client certificate from the CA" and "… refuses a client without a certificate" for HTTP/2) | §13.1 (verify) | Compliant | Opt-in: a non-empty `tls_ca_file` enforces client certificates on both listeners, and an unreadable CA stops startup. | H1.10 | — |
 | OAuth2 access-token validation | pre-routing handler in `src/nwdaf_server.cpp` | §13.4.1 (verify); TS 29.510 `AccessTokenClaims`; TS 29.520 OAuth2 scopes `nnwdaf-analyticsinfo` and `nnwdaf-eventssubscription` | Non-compliant | Only checks that a Bearer token is present. There's no signature, claim or scope validation. | H1.10 | Validate the signature and the `iss`, `sub`, `aud`, `exp` and per-service `scope` claims. Answer 401 or 403 with `WWW-Authenticate`. |
 | Source of the token verification key | — | Implementation-specific; this is **not** a 3GPP mechanism | Not implemented | — | H1.10 | Add a key-provider interface. The initial Open5GS implementation reads a configured NRF public-key file, documented as a deployment mechanism. |
-| NRF client server-certificate verification | `createHttpClient` in `src/main.cpp` | §13.1 (verify) | Partially compliant | Verification is on: against `tls_ca_file` when set, else the system trust store. When TLS is enabled the client also presents the NF certificate. No automated test yet. | H1.10, H1.9 | Cover it in `test_nrf_client` once the NRF client is extracted (H1.9). |
+| NRF client server-certificate verification | `NwdafHttpClient` (libcurl `SSL_VERIFYPEER`/`VERIFYHOST`, `tls_ca_file` as CA, the NF certificate presented when `tls_enabled`) | §13.1 (verify) | Partially compliant | Implemented. There's no automated test against an https NRF yet. | H1.10, H1.9 | Cover it in `test_nrf_client` (H1.9). |
 
 ## 9. Data collection — TS 23.288 V18.13.0
 
@@ -178,18 +178,20 @@ or a recorded manual check as evidence.
 | Every advertised analytics ID produces output that validates against the official schemas | Official-schema suite in `test_openapi_conformance` | Open |
 | Unsupported IDs aren't advertised; advertised ⊆ implemented ⊆ known; advertisement doesn't flap on transient failures; a real capability change sends an NFUpdate | `test_analytics_catalogue`, `test_nrf_client` | Open |
 | Requests are validated against the official schema first. A schema-valid request we don't support gets the operation-specific failure semantics. | `test_3gpp_sbi`, `test_schema_validator` | Open |
-| HTTP/2 conformance, over both h2c and TLS h2 | HTTP/2 suite in the main CI jobs | Open |
+| HTTP/2 conformance, over both h2c and TLS h2 | `tests/test_3gpp_sbi.cpp` over HTTP/2 in the Ubuntu 22.04 full CI job (`NWDAF_REQUIRE_REL18_PROFILE`); `tests/test_sbi_security.cpp` h2/TLS tests | **Met** |
 | Correct NRF registration, a truthful profile, and the full lifecycle | `test_nrf_client`, with a mock NRF over HTTP/2 | Open |
 | ProblemDetails, application errors and the per-operation failure semantics | `test_3gpp_sbi` | Open |
 | Supported-features negotiation | `test_supported_features`, `test_3gpp_sbi`, `test_nrf_client` | Open |
 | mTLS and OAuth2 access-token validation | `test_sbi_security` | Open |
 | Every Compliant row in this document names a passing test | Cross-check of the tests this document cites | Open |
-| Manual interoperability with Open5GS, either validated or marked Requires verification | A dated record below | Open |
+| Manual interoperability with Open5GS, either validated or marked Requires verification | A dated record below | NRF: **validated** (2026-09-28). Notification consumers: Requires verification (no Open5GS NF subscribes to NWDAF analytics). |
 | Baseline items B-1 and B-2 resolved or explicitly carried forward | [`frozen-standards.md`](frozen-standards.md) | B-1 closed; B-2 open |
 
 ### Interoperability records
 
-_None yet._
+| Date | Peer | Topology | Result |
+|---|---|---|---|
+| 2026-09-28 | Open5GS NRF **v2.8.0** (`open5gs-nrf`, ppa:open5gs/latest, Ubuntu 22.04) | NRF and NWDAF in containers sharing one network namespace; NRF on `127.0.0.10:7777`, NWDAF 3GPP interfaces on `127.0.0.1:7780` (h2c) | **HTTP/1.1 NFRegister rejected** by the NRF (`nghttp2_session_mem_recv() failed (-903: Received bad client magic byte string)`): pre-H1.8 builds could not register. **With H1.8:** NFRegister `201 Created` over HTTP/2; NFUpdate heartbeat `204` every 3 s; the NRF lists the NWDAF with its HTTP/2 endpoint (port 7780); `GET /nnwdaf-analyticsinfo/v1/analytics` over h2c answered as specified. The profile the NRF stored shows the H1.9 gaps: only `nnwdaf-analyticsinfo`, `apiFullVersion` "1.0.0", no `nwdafInfo`, no supported features. |
 
 ## Appendix A — Pinned prose facts (TS 29.520 V18.14.0)
 

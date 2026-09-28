@@ -209,17 +209,39 @@ void NwdafServer::setupRoutes() {
         });
 }
 
-void NwdafServer::handle3gpp(const httplib::Request& req, httplib::Response& res) {
-    if (!rate_limiter_.allow(req.remote_addr)) {
-        // TS 29.500 Table 5.2.7.2-1: excessive request rate.
-        res.status = 429;
-        res.set_header("Retry-After", "1");
-        res.set_content(json{{"title", "Too Many Requests"}, {"status", 429},
-                             {"cause", "NF_CONGESTION_RISK"},
-                             {"detail", "request rate limit exceeded"}}.dump(),
-                        "application/problem+json");
-        return;
+const char* NwdafServer::transportProfile(const NwdafConfig& config) {
+#ifdef NWDAF_USE_HTTP2
+    if (config.sbi_h2_port > 0) return "rel18-sbi";
+#else
+    (void)config;
+#endif
+    return "dev-legacy";
+}
+
+SbiResponse NwdafServer::serve3gpp(const SbiRequest& req, const std::string& remote_addr) {
+    if (!NwdafSbiService::handles(req.path))
+        return {404, "", "", {}};
+    if (config_.oauth_enabled) {
+        // Same presence check as the HTTP/1.1 pre-routing handler (P1-4);
+        // access-token validation is roadmap H1.10.
+        auto it = req.headers.find("authorization");
+        if (it == req.headers.end() || it->second.rfind("Bearer ", 0) != 0 || it->second.size() <= 7)
+            return {401, "application/problem+json",
+                    json{{"title", "Unauthorized"}, {"status", 401},
+                         {"detail", "missing or invalid OAuth 2.0 access token"}}.dump(),
+                    {{"WWW-Authenticate", "Bearer"}}};
     }
+    if (!rate_limiter_.allow(remote_addr))
+        // TS 29.500 Table 5.2.7.2-1: excessive request rate.
+        return {429, "application/problem+json",
+                json{{"title", "Too Many Requests"}, {"status", 429},
+                     {"cause", "NF_CONGESTION_RISK"},
+                     {"detail", "request rate limit exceeded"}}.dump(),
+                {{"Retry-After", "1"}}};
+    return sbi_.dispatch(req);
+}
+
+void NwdafServer::handle3gpp(const httplib::Request& req, httplib::Response& res) {
     SbiRequest sreq;
     sreq.method = req.method;
     sreq.path   = req.path;
@@ -234,18 +256,41 @@ void NwdafServer::handle3gpp(const httplib::Request& req, httplib::Response& res
         : config_.sbi_bind_address + ":" + std::to_string(config_.sbi_port);
     sreq.api_root = std::string(config_.tls_enabled ? "https" : "http") + "://" + host;
 
-    SbiResponse out = sbi_.dispatch(sreq);
+    SbiResponse out = serve3gpp(sreq, req.remote_addr);
     res.status = out.status;
     for (const auto& [k, v] : out.headers) res.set_header(k, v);
     if (!out.body.empty()) res.set_content(out.body, out.content_type);
 }
 
 void NwdafServer::start() {
-    spdlog::info("NWDAF SBI server starting on {}:{}", config_.sbi_bind_address, config_.sbi_port);
+#ifdef NWDAF_USE_HTTP2
+    // H1.8: the 3GPP interfaces over HTTP/2 (TS 29.500 §5.2) on their own port.
+    if (config_.sbi_h2_port > 0) {
+        NwdafH2Server::Options opts;
+        opts.bind_address = config_.sbi_bind_address;
+        opts.port         = config_.sbi_h2_port;
+        opts.tls          = config_.tls_enabled;
+        opts.cert_file    = config_.tls_cert_file;
+        opts.key_file     = config_.tls_key_file;
+        opts.ca_file      = config_.tls_ca_file;
+        h2_ = std::make_unique<NwdafH2Server>(opts,
+            [this](const SbiRequest& req, const std::string& remote) { return serve3gpp(req, remote); });
+        h2_->start();
+    }
+#endif
+    spdlog::info("NWDAF SBI transport profile: {}{}", transportProfile(config_),
+                 std::string(transportProfile(config_)) == "dev-legacy"
+                     ? " — the 3GPP interfaces are served over HTTP/1.1 only, which is "
+                       "transport non-compliant (TS 29.500 §5.2)" : "");
+    spdlog::info("NWDAF operator API starting on {}:{} (HTTP/1.1)",
+                 config_.sbi_bind_address, config_.sbi_port);
     svr_->listen(config_.sbi_bind_address.c_str(), config_.sbi_port);
 }
 
 void NwdafServer::stop() {
+#ifdef NWDAF_USE_HTTP2
+    if (h2_) h2_->stop();
+#endif
     svr_->stop();
 }
 
@@ -294,6 +339,8 @@ void NwdafServer::handleHealth(const httplib::Request& req, httplib::Response& r
         {"nfType",       "NWDAF"},
         {"nfInstanceId", config_.nf_instance_id},
         {"ts",           nowISO()},
+        // H1.8: rel18-sbi (HTTP/2) or dev-legacy (transport non-compliant).
+        {"sbiTransportProfile", transportProfile(config_)},
         {"nfProfile", {
             {"nfType",       "NWDAF"},
             {"nfInstanceId", config_.nf_instance_id},

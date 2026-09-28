@@ -1,4 +1,5 @@
 #include "nwdaf_notifier.hpp"
+#include "nwdaf_http_client.hpp"
 #include "nwdaf_sbi.hpp"
 #include <spdlog/spdlog.h>
 #include <httplib.h>
@@ -192,24 +193,16 @@ void NwdafNotifier::deliverRel18(const Subscription& sub) {
     if (reports.empty()) return;
 
     const json body = {{"subscriptionId", sub.sub_id}, {"eventNotifications", reports}};
-    auto [base, path] = splitUrl(sub.notif_uri);
-    try {
-        httplib::Client cli(base);
-        cli.set_connection_timeout(3);
-        cli.set_read_timeout(5);
-        // TS 29.500 §5.2.3.2.3: the callback type is the notify operation.
-        httplib::Headers headers = {{"3gpp-Sbi-Callback", "Nnwdaf_EventsSubscription_Notify"}};
-        auto res = cli.Post(path, headers, body.dump(), "application/json");
-        if (!res || res->status < 200 || res->status >= 300) {
-            if (notif_failures_) ++(*notif_failures_);
-            spdlog::warn("Notifier: Rel-18 delivery failed for sub {} → {} (HTTP {})",
-                         sub.sub_id, sub.notif_uri,
-                         res ? std::to_string(res->status) : "no response");
-            return;
-        }
-    } catch (const std::exception& e) {
+    // H1.8: over HTTP/2 to 3GPP consumers (TS 29.500 §5.2); TS 29.500
+    // §5.2.3.2.3: the callback type is the notify service operation.
+    const auto res = NwdafHttpClient(config_).request(
+        "POST", sub.notif_uri, body.dump(), "application/json",
+        {{"3gpp-Sbi-Callback", "Nnwdaf_EventsSubscription_Notify"}});
+    if (!res || res.status < 200 || res.status >= 300) {
         if (notif_failures_) ++(*notif_failures_);
-        spdlog::warn("Notifier: Rel-18 delivery exception for sub {}: {}", sub.sub_id, e.what());
+        spdlog::warn("Notifier: Rel-18 delivery failed for sub {} → {} ({})",
+                     sub.sub_id, sub.notif_uri,
+                     res ? "HTTP " + std::to_string(res.status) : res.error);
         return;
     }
 

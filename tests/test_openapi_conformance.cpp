@@ -65,6 +65,7 @@ static NwdafConfig confConfig() {
     cfg.served_snssai_sst = 1; cfg.served_snssai_sd = "000001";
     cfg.served_dnn = "internet";
     cfg.sbi_bind_address = "127.0.0.1"; cfg.sbi_port = CONF_PORT;
+    cfg.sbi_h2_port = 0;
     cfg.nf_service_names = {{"AMF","amfd"},{"SMF","smfd"},{"UPF","upfd"}};
     cfg.throughput_interfaces = {"ogstun"};
     cfg.throughput_history_size = 360;

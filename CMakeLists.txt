@@ -22,6 +22,16 @@ option(NWDAF_ENABLE_PUSH_DELIVERY "Enable subscription push delivery background 
 # ARCH-05: TLS / mTLS for SBI interface (TS 33.501 §13.3).
 # Requires OpenSSL dev headers; cpp-httplib uses CPPHTTPLIB_OPENSSL_SUPPORT.
 option(NWDAF_USE_TLS              "Enable TLS for SBI (requires OpenSSL)" ON)
+# H1.8: HTTP/2 for the 3GPP interfaces (TS 29.500 §5.2) — nghttp2 server,
+# libcurl client. OFF gives the explicitly transport non-compliant dev-legacy
+# profile.
+option(NWDAF_USE_HTTP2            "Serve and call the 3GPP SBI over HTTP/2 (requires nghttp2, libcurl)" ON)
+# H1.8: fail the configure unless the build is eligible for the Rel-18 SBI
+# profile (HTTP/2 and TLS). Set by the main CI conformance job.
+option(NWDAF_REQUIRE_REL18_PROFILE "Require HTTP/2 and TLS (rel18-sbi profile)" OFF)
+if(NWDAF_REQUIRE_REL18_PROFILE AND (NOT NWDAF_USE_HTTP2 OR NOT NWDAF_USE_TLS))
+    message(FATAL_ERROR "NWDAF_REQUIRE_REL18_PROFILE needs NWDAF_USE_HTTP2=ON and NWDAF_USE_TLS=ON")
+endif()
 
 # ── Dependencies ─────────────────────────────────────────────────────────────
 find_package(PkgConfig REQUIRED)
@@ -86,6 +96,17 @@ if(NWDAF_USE_TLS)
     message(STATUS "TLS enabled — SBI will use httplib::SSLServer (OpenSSL)")
 endif()
 
+# H1.8: nghttp2 + libcurl (HTTP/2 SBI)
+if(NWDAF_USE_HTTP2)
+    pkg_check_modules(NGHTTP2 REQUIRED libnghttp2)
+    find_package(CURL REQUIRED)
+    add_compile_definitions(NWDAF_USE_HTTP2)
+    message(STATUS "HTTP/2 enabled — 3GPP interfaces on sbi_h2_port (rel18-sbi profile)")
+else()
+    message(WARNING "NWDAF_USE_HTTP2=OFF — dev-legacy profile: the 3GPP interfaces are "
+                    "HTTP/1.1 only, which is transport non-compliant (TS 29.500 §5.2)")
+endif()
+
 # SQLite3 (optional) — PROD-01 throughput persistence + PROD-02 subscription persistence
 find_package(SQLite3 QUIET)
 if(SQLite3_FOUND)
@@ -109,6 +130,7 @@ set(NWDAF_LIB_SOURCES
     src/nwdaf_supported_features.cpp
     src/nwdaf_sbi.cpp
     src/nwdaf_3gpp_adapter.cpp
+    src/nwdaf_http_client.cpp
     src/nwdaf_collector.cpp
     src/nwdaf_analytics.cpp
     src/nwdaf_server.cpp
@@ -122,6 +144,10 @@ if(NWDAF_ENABLE_PUSH_DELIVERY)
     list(APPEND NWDAF_LIB_SOURCES src/nwdaf_notifier.cpp)
     add_compile_definitions(NWDAF_ENABLE_PUSH_DELIVERY)
     message(STATUS "Push delivery enabled (NWDAF_ENABLE_PUSH_DELIVERY=ON)")
+endif()
+
+if(NWDAF_USE_HTTP2)
+    list(APPEND NWDAF_LIB_SOURCES src/nwdaf_h2_server.cpp)
 endif()
 
 add_library(nwdaf_lib ${NWDAF_LIB_SOURCES})
@@ -142,6 +168,11 @@ endif()
 if(NWDAF_USE_TLS)
     target_compile_definitions(nwdaf_lib PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT)
     target_link_libraries(nwdaf_lib PUBLIC OpenSSL::SSL OpenSSL::Crypto)
+endif()
+
+if(NWDAF_USE_HTTP2)
+    target_link_libraries(nwdaf_lib PUBLIC ${NGHTTP2_LIBRARIES} CURL::libcurl)
+    target_include_directories(nwdaf_lib PUBLIC ${NGHTTP2_INCLUDE_DIRS})
 endif()
 
 if(mongocxx_FOUND)

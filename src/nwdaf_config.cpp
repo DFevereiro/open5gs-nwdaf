@@ -40,6 +40,7 @@ NwdafConfig NwdafConfig::load(const std::string& yaml_path) {
     cfg.plmn_mnc          = n["plmn_mnc"]          ? n["plmn_mnc"].as<std::string>()          : "70";
     cfg.sbi_bind_address  = n["sbi_bind_address"]  ? n["sbi_bind_address"].as<std::string>()  : "127.0.0.1";
     cfg.sbi_port          = n["sbi_port"]          ? n["sbi_port"].as<int>()                  : 7779;
+    cfg.sbi_h2_port       = n["sbi_h2_port"]       ? n["sbi_h2_port"].as<int>()               : 7780;
 
     if (n["nf_service_names"]) {
         for (const auto& kv : n["nf_service_names"])

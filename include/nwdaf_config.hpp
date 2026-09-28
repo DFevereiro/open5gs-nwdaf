@@ -14,6 +14,10 @@ public:
     std::string served_dnn = "internet";
     std::string sbi_bind_address;
     int         sbi_port = 7779;
+    // H1.8: HTTP/2 listener for the 3GPP interfaces (TS 29.500 §5.2); 0 disables
+    // it. Needs a build with NWDAF_USE_HTTP2; port 7779 stays HTTP/1.1 for the
+    // operator API and dashboard.
+    int         sbi_h2_port = 7780;
 
     std::map<std::string, std::string> nf_service_names;
 

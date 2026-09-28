@@ -119,10 +119,10 @@ SbiResponse NwdafSbiService::dispatch(const SbiRequest& req) {
                        "the official 3GPP OpenAPI artifacts are not installed on this instance");
 
     if (req.path == analytics) {
-        // POST on this path is the deprecated, non-standard operator form and
-        // is served by the operator API, not here.
+        // The 3GPP resource supports GET only. The deprecated, non-standard
+        // JSON-body POST exists on the operator (HTTP/1.1) port alone.
         if (req.method == "GET") return getAnalytics(req);
-        return methodNotAllowed("GET, POST");
+        return methodNotAllowed("GET");
     }
     if (req.path == subs) {
         if (req.method == "POST") return createSubscription(req);
