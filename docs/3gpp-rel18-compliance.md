@@ -132,13 +132,13 @@ interfaces: NF_LOAD, when `nf_instance_ids` is configured.**
 
 | Capability | Code | 3GPP reference | Current status | Rel-18 gap | Roadmap item | Required action |
 |---|---|---|---|---|---|---|
-| NF profile service list | `registerWithNrf` | `NFProfile.nfServiceList` (a map). `nfServices` is **deprecated**. | Non-compliant | Uses the deprecated `nfServices`. | H1.9 | Use `nfServiceList`. |
-| Advertised services | `registerWithNrf` | `ServiceName` values `nnwdaf-analyticsinfo` and `nnwdaf-eventssubscription` | Partially compliant | Only `nnwdaf-analyticsinfo` is advertised. | H1.9 | Advertise both services. Each entry carries the local supported-features bitmask. |
-| Service scheme | `registerWithNrf` | `NFService.scheme` | Non-compliant | Hard-coded to `http`, even when TLS is enabled. | H1.9 | Derive the scheme from the TLS setting. |
-| `nwdafInfo` | — | `NwdafInfo` (`eventIds`, `nwdafEvents`, `taiList`, `taiRangeList`, `nwdafCapability`, `analyticsDelay`, `servingNfSetIdList`, `servingNfTypeList`, `mlAnalyticsList`) | Not implemented | Absent from the registered profile. `/health` shows a non-standard `analyticsIds` field. | H1.9 | Populate it **truthfully**: only the advertised events, and TAIs only when configured. Omit the other fields unless a real capability backs them. |
-| Heartbeat | NRF heartbeat thread in `main.cpp` | NFUpdate by `PATCH` with `application/json-patch+json` | Partially compliant | Re-registers only after 3 misses. It should re-register as soon as the NRF says the profile is gone. | H1.9 | Re-register immediately on 404. |
-| Deregistration | — | NFDeregister (`DELETE`) | Not implemented | — | H1.9 | Deregister on shutdown. |
-| Update on capability change | — | NFUpdate | Not implemented | — | H1.9 | Send an explicit NFUpdate when a capability-affecting configuration change alters the advertised set. |
+| NF profile service list | `NwdafNrfClient::profile` (`src/nwdaf_nrf_client.cpp`) · test `tests/test_nrf_client.cpp` "H1.9: the NF profile is a valid Rel-18 NFProfile with both Nnwdaf services", which validates it against the official `NFProfile` schema | `NFProfile.nfServiceList`; `nfServices` is deprecated | Compliant | — | H1.9 | — |
+| Advertised services | `profile()` · same test | `ServiceName` values `nnwdaf-analyticsinfo` (API 1.3.5) and `nnwdaf-eventssubscription` (API 1.3.3) | Compliant | Both services are registered on the HTTP/2 endpoint. Each carries its own local supported-features bitmask when that bitmask is non-empty. | H1.9 | — |
+| Service scheme | `profile()` · test `tests/test_nrf_client.cpp` "H1.9: scheme and oauth2Required follow the configuration" | `NFService.scheme` | Compliant | — | H1.9 | — |
+| `nwdafInfo` | `profile()` · test `tests/test_nrf_client.cpp` "H1.9: the profile claims nothing that is not supported" | `NwdafInfo` | Compliant | Truthful: `nwdafEvents` and `eventIds` hold the advertised analytics only, and `nwdafInfo` is left out entirely when nothing is advertised. `taiList`, `nwdafCapability`, `analyticsDelay`, the serving-NF lists and `mlAnalyticsList` are omitted because nothing backs them. **Interop note:** the Open5GS v2.8.0 NRF doesn't store `nwdafInfo` (see the interoperability records). | H1.9 | — |
+| Heartbeat | `NwdafNrfClient::heartbeat` · test `tests/test_nrf_client.cpp` "H1.9: heartbeat is an NFUpdate PATCH; 404 re-registers at once" | NFUpdate `PATCH` (`application/json-patch+json`) | Compliant | `404` → immediate NFRegister. Other failures retry with a capped backoff and re-register after three misses. | H1.9 | — |
+| Deregistration | `NwdafNrfClient::deregister`, called on shutdown in `src/main.cpp` · test `tests/test_nrf_client.cpp` "H1.9: NFDeregister DELETEs the instance"; validated against Open5GS | NFDeregister (`DELETE`) | Compliant | — | H1.9 | — |
+| Update on capability change | `profile()` depends on configuration only · test `tests/test_nrf_client.cpp` "H1.9: a transient NRF failure does not change the profile" | NFRegister (`PUT`) replaces the profile; NFUpdate | Compliant | Capability-affecting settings (`nf_instance_ids`, ports, TLS, OAuth) take effect only on restart, like the rest of the configuration. The restart registers again with `PUT`, which replaces the profile the NRF holds. Transient failures never change the advertisement. | H1.9 | — |
 | NF discovery | — | `Nnrf_NFDiscovery` 1.3.4 | Not implemented | NF instance IDs are needed for NF_LOAD. | H1.9 | Look them up by NF type. A configured map is the Open5GS fallback. |
 
 ## 8. Security — TS 33.501 V18.12.0
@@ -176,10 +176,10 @@ or a recorded manual check as evidence.
 |---|---|---|
 | Conformant AnalyticsInfo and EventsSubscription APIs | `test_3gpp_sbi`, run over HTTP/2 | Open |
 | Every advertised analytics ID produces output that validates against the official schemas | Official-schema suite in `test_openapi_conformance` | Open |
-| Unsupported IDs aren't advertised; advertised ⊆ implemented ⊆ known; advertisement doesn't flap on transient failures; a real capability change sends an NFUpdate | `test_analytics_catalogue`, `test_nrf_client` | Open |
+| Unsupported IDs aren't advertised; advertised ⊆ implemented ⊆ known; advertisement doesn't flap on transient failures; a real capability change is reflected in the NRF profile | `test_analytics_catalogue`, `test_nrf_client` | **Met** (capability changes are restart-only, and the restart re-registers with NFRegister) |
 | Requests are validated against the official schema first. A schema-valid request we don't support gets the operation-specific failure semantics. | `test_3gpp_sbi`, `test_schema_validator` | Open |
 | HTTP/2 conformance, over both h2c and TLS h2 | `tests/test_3gpp_sbi.cpp` over HTTP/2 in the Ubuntu 22.04 full CI job (`NWDAF_REQUIRE_REL18_PROFILE`); `tests/test_sbi_security.cpp` h2/TLS tests | **Met** |
-| Correct NRF registration, a truthful profile, and the full lifecycle | `test_nrf_client`, with a mock NRF over HTTP/2 | Open |
+| Correct NRF registration, a truthful profile, and the full lifecycle | `test_nrf_client` (a mock NRF over HTTP/2); Open5GS interop record | **Met** for register, heartbeat, `404` re-registration and deregister. NF discovery is still open (H1.9 part 2). |
 | ProblemDetails, application errors and the per-operation failure semantics | `test_3gpp_sbi` | Open |
 | Supported-features negotiation | `test_supported_features`, `test_3gpp_sbi`, `test_nrf_client` | Open |
 | mTLS and OAuth2 access-token validation | `test_sbi_security` | Open |
@@ -192,6 +192,7 @@ or a recorded manual check as evidence.
 | Date | Peer | Topology | Result |
 |---|---|---|---|
 | 2026-09-28 | Open5GS NRF **v2.8.0** (`open5gs-nrf`, ppa:open5gs/latest, Ubuntu 22.04) | NRF and NWDAF in containers sharing one network namespace; NRF on `127.0.0.10:7777`, NWDAF 3GPP interfaces on `127.0.0.1:7780` (h2c) | **HTTP/1.1 NFRegister rejected** by the NRF (`nghttp2_session_mem_recv() failed (-903: Received bad client magic byte string)`): pre-H1.8 builds could not register. **With H1.8:** NFRegister `201 Created` over HTTP/2; NFUpdate heartbeat `204` every 3 s; the NRF lists the NWDAF with its HTTP/2 endpoint (port 7780); `GET /nnwdaf-analyticsinfo/v1/analytics` over h2c answered as specified. The profile the NRF stored shows the H1.9 gaps: only `nnwdaf-analyticsinfo`, `apiFullVersion` "1.0.0", no `nwdafInfo`, no supported features. |
+| 2026-09-28 | Open5GS NRF **v2.8.0**, same topology | H1.9 client; `nf_instance_ids` set to a test value so that NF_LOAD is advertised | NFRegister `201` over HTTP/2. The NRF stores both services, `nnwdaf-analyticsinfo` (`apiFullVersion` 1.3.5) and `nnwdaf-eventssubscription` (1.3.3), each on the HTTP/2 endpoint (port 7780). Heartbeats `204` every 3 s. On SIGTERM the NWDAF sends NFDeregister: the NRF logs `NF de-registered`, and a later GET of the profile returns `404`. **Open5GS limitation:** the NRF does not store the sent `nwdafInfo` or the per-service `supportedFeatures`; the stored profile omits them. Consumers therefore can't discover this NWDAF by analytics ID through an Open5GS v2.8.0 NRF. |
 
 ## Appendix A — Pinned prose facts (TS 29.520 V18.14.0)
 

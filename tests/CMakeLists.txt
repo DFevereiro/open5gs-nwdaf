@@ -48,6 +48,7 @@ add_executable(nwdaf_integration_tests
     test_openapi_conformance.cpp   # H1.6 OpenAPI contract test
     test_sbi_security.cpp          # H1.10 mTLS (compiled to no tests without NWDAF_USE_TLS)
     test_3gpp_sbi.cpp              # H1.7 3GPP Nnwdaf_AnalyticsInfo / EventsSubscription
+    test_nrf_client.cpp            # H1.9 NRF NFManagement client
 )
 target_include_directories(nwdaf_integration_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}

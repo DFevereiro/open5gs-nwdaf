@@ -38,7 +38,7 @@ The build uses `-Wall -Wextra -Werror`, so any warning fails the build. Fix warn
 
 ## Architecture
 
-Everything except `src/main.cpp` compiles into the static library `nwdaf_lib`, which the daemon and the tests both link. `main.cpp` wires the components together, then runs the NRF registration, the heartbeat thread (TS 29.510 §5.3.2.4) and the SIGHUP hot-reload.
+Everything except `src/main.cpp` compiles into the static library `nwdaf_lib`, which the daemon and the tests both link. `main.cpp` wires the components together, then runs the heartbeat thread (TS 29.510 §5.3.2.4) and the SIGHUP hot-reload. NRF NFRegister, heartbeat and NFDeregister live in `NwdafNrfClient` (`src/nwdaf_nrf_client.cpp`), whose `profile()` is built from configuration only. It is tested against a mock NRF in `tests/test_nrf_client.cpp`.
 
 Data flows through these components in order:
 

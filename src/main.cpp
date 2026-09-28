@@ -3,7 +3,7 @@
 #include "nwdaf_analytics.hpp"
 #include "nwdaf_server.hpp"
 #include "nwdaf_subscription.hpp"
-#include "nwdaf_http_client.hpp"
+#include "nwdaf_nrf_client.hpp"
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
@@ -26,7 +26,6 @@
 #endif
 
 static std::atomic<bool>   g_shutdown{false};
-static std::atomic<int>    g_heartbeat_interval{60};
 static NwdafServer*        g_server_ptr    = nullptr;
 static NwdafCollector*     g_collector_ptr = nullptr;
 static NwdafAnalyticsEngine* g_engine_ptr  = nullptr;
@@ -94,52 +93,6 @@ static void setupLogging(const NwdafConfig& cfg) {
     spdlog::set_default_logger(logger);
 }
 
-static bool registerWithNrf(const NwdafConfig& cfg) {
-    using json = nlohmann::json;
-    json body = {
-        {"nfInstanceId", cfg.nf_instance_id},
-        {"nfType",       "NWDAF"},
-        {"nfStatus",     "REGISTERED"},
-        {"heartBeatTimer", cfg.nrf_heartbeat_interval_seconds},
-        {"ipv4Addresses", {cfg.sbi_bind_address}},
-        {"plmnList",     {{{"mcc", cfg.plmn_mcc}, {"mnc", cfg.plmn_mnc}}}},
-        {"nfServices",   {{
-            {"serviceInstanceId", "nwdaf-analytics-1"},
-            {"serviceName",       "nnwdaf-analyticsinfo"},
-            {"versions",          {{{"apiVersionInUri", "v1"}, {"apiFullVersion", "1.0.0"}}}},
-            // H1.8: the 3GPP interfaces are served on the HTTP/2 listener when
-            // there is one; the full Rel-18 profile is roadmap H1.9.
-            {"scheme",            cfg.tls_enabled ? "https" : "http"},
-            {"nfServiceStatus",   "REGISTERED"},
-            {"ipEndPoints",       {{{"ipv4Address", cfg.sbi_bind_address},
-                                    {"port", NwdafHttpClient::http2() && cfg.sbi_h2_port > 0
-                                                 ? cfg.sbi_h2_port : cfg.sbi_port}}}}
-        }}}
-    };
-    
-    // H1.8: HTTP/2 towards the NRF (TS 29.500 §5.2); the Open5GS NRF does not
-    // accept HTTP/1.1.
-    const NwdafHttpClient http(cfg);
-    const std::string url = cfg.nrf_uri + "/nnrf-nfm/v1/nf-instances/" + cfg.nf_instance_id;
-
-    auto res = http.request("PUT", url, body.dump(), "application/json");
-    if (res && (res.status == 201 || res.status == 200)) {
-        spdlog::info("NRF registration successful ({} {}, HTTP/{})", res.status,
-                     res.status == 201 ? "Created" : "OK", res.http_version);
-        try {
-            auto res_json = json::parse(res.body);
-            if (res_json.contains("heartBeatTimer")) {
-                g_heartbeat_interval = res_json["heartBeatTimer"].get<int>();
-                spdlog::info("Updated heartbeat interval to {}s from NRF", g_heartbeat_interval.load());
-            }
-        } catch (...) {}
-        return true;
-    } else {
-        spdlog::warn("NRF registration failed ({})",
-                     res ? "HTTP " + std::to_string(res.status) : res.error);
-        return false;
-    }
-}
 
 int main(int argc, char* argv[]) {
     std::string config_path = "/etc/open5gs/nwdaf.yaml";
@@ -181,12 +134,9 @@ int main(int argc, char* argv[]) {
 
     collector.startBackgroundCollection();
 
-    if (config.nrf_register_on_startup) {
-        try { registerWithNrf(config); }
-        catch (const std::exception& e) {
-            spdlog::warn("NRF registration error: {}", e.what());
-        }
-    }
+    // H1.9: NRF NFManagement — NFRegister now, NFUpdate heartbeats, NFDeregister on exit.
+    NwdafNrfClient nrf(config);
+    if (config.nrf_register_on_startup) nrf.registerNf();
 
     // COMP-01: subscription push delivery notifier
     // PROD-03: pass server's atomic counters so /metrics can expose them
@@ -196,52 +146,28 @@ int main(int argc, char* argv[]) {
     notifier.start();
 #endif
 
-    // COMP-02: NRF heartbeat thread (TS 29.510 §5.3.2.4)
+    // COMP-02: NRF heartbeat thread (TS 29.510 §5.3.2.4). The client
+    // re-registers at once when the NRF answers 404; other failures retry with
+    // a capped backoff and re-register after three misses.
     std::thread nrf_hb_thread;
     if (config.nrf_register_on_startup && config.nrf_heartbeat_interval_seconds > 0) {
-        g_heartbeat_interval = config.nrf_heartbeat_interval_seconds;
-        nrf_hb_thread = std::thread([&config]() {
+        nrf_hb_thread = std::thread([&nrf]() {
             int elapsed = 0;
             int miss_count = 0;
-            const NwdafHttpClient http(config);
-            const std::string url = config.nrf_uri + "/nnrf-nfm/v1/nf-instances/" + config.nf_instance_id;
-
             while (!g_shutdown) {
                 std::this_thread::sleep_for(std::chrono::seconds(1));
                 if (g_shutdown) break;
-                if (++elapsed < g_heartbeat_interval.load()) continue;
+                if (++elapsed < nrf.heartbeatSeconds()) continue;
                 elapsed = 0;
-                try {
-                    nlohmann::json patch = nlohmann::json::array();
-                    patch.push_back({{"op", "replace"}, {"path", "/nfStatus"}, {"value", "REGISTERED"}});
-                    
-                    auto res = http.request("PATCH", url, patch.dump(), "application/json-patch+json");
-                    int status = res ? static_cast<int>(res.status) : -1;
-                    
-                    if (status != 200 && status != 204) {
-                        miss_count++;
-                        spdlog::warn("NRF heartbeat failed ({}), miss count: {}", status, miss_count);
-                        if (miss_count >= 3) {
-                            spdlog::warn("NRF heartbeat missed {} times, re-registering", miss_count);
-                            if (registerWithNrf(config)) {
-                                miss_count = 0;
-                            } else {
-                                // backoff next heartbeat attempt
-                                int backoff = std::min(30, 2 << miss_count);
-                                elapsed = g_heartbeat_interval.load() - backoff;
-                            }
-                        } else {
-                            // Capped exponential backoff for next heartbeat retry (up to 8 seconds)
-                            int backoff = std::min(8, 2 << miss_count);
-                            elapsed = g_heartbeat_interval.load() - backoff;
-                        }
-                    } else {
-                        miss_count = 0;
-                        spdlog::info("NRF heartbeat sent successfully ({} OK)", status);
-                    }
-                } catch (const std::exception& e) {
-                    spdlog::warn("NRF heartbeat exception: {}", e.what());
+                if (nrf.heartbeat() != NwdafNrfClient::Heartbeat::Failed) {
+                    miss_count = 0;
+                    continue;
                 }
+                if (++miss_count >= 3 && nrf.registerNf()) {
+                    miss_count = 0;
+                    continue;
+                }
+                elapsed = nrf.heartbeatSeconds() - std::min(miss_count >= 3 ? 30 : 8, 2 << miss_count);
             }
         });
     }
@@ -258,6 +184,7 @@ int main(int argc, char* argv[]) {
 #endif
 
     if (nrf_hb_thread.joinable()) nrf_hb_thread.join();
+    if (config.nrf_register_on_startup) nrf.deregister();
 
 #ifdef NWDAF_USE_SD_JOURNAL
     sd_notify(0, "STOPPING=1");
