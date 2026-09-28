@@ -250,6 +250,16 @@ Base URL: `http://<host>:7779`
 | `DELETE` | `/nwdaf-analytics/v1/subscriptions/{subId}` | Delete subscription |
 | `POST` | `/nwdaf-analytics/v1/train` | Retrain the Isolation Forest on collected history |
 
+**3GPP Rel-18 interfaces** (TS 29.520 V18.14.0; requests validated against the official OpenAPI; see [`docs/3gpp-rel18-compliance.md`](docs/3gpp-rel18-compliance.md)):
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/nnwdaf-analyticsinfo/v1/analytics?event-id=…&tgt-ue=…` | `Nnwdaf_AnalyticsInfo`. Currently NF_LOAD, when `nf_instance_ids` is configured. |
+| `POST` | `/nnwdaf-eventssubscription/v1/subscriptions` | `Nnwdaf_EventsSubscription` Subscribe. Returns `201` + `Location`. |
+| `PUT` / `DELETE` | `/nnwdaf-eventssubscription/v1/subscriptions/{subscriptionId}` | Modify / Unsubscribe |
+
+Notifications are `NnwdafEventsSubscriptionNotification` bodies, sent with `3gpp-Sbi-Callback: Nnwdaf_EventsSubscription_Notify`. The transport is still HTTP/1.1; HTTP/2 is roadmap H1.8.
+
 ### Examples
 
 ```bash
@@ -281,6 +291,7 @@ Everything deployment-specific lives in [`config/nwdaf.yaml`](config/nwdaf.yaml)
 | `plmn_mcc` / `plmn_mnc` | `999` / `70` | PLMN (test network default) |
 | `sbi_bind_address` / `sbi_port` | `127.0.0.1` / `7779` | SBI endpoint (must not collide with Open5GS's 7777) |
 | `nf_service_names` | `AMF→amfd`, … | Open5GS systemd unit suffix map |
+| `nf_instance_ids` | — | NF type → the NF's real `nfInstanceId`. Required for Rel-18 NF_LOAD on the 3GPP interfaces, which is advertised only when this is set. |
 | `throughput_interfaces` | `ogstun` | UPF tunnel interfaces to sample |
 | `collection_interval_seconds` | `10` | Collector cadence |
 | `supi_regex` | `imsi-(\d{15})` | SUPI extraction pattern (Open5GS v2.7.6) |

@@ -1,4 +1,5 @@
 #include "nwdaf_sbi.hpp"
+#include "nwdaf_3gpp_adapter.hpp"
 #include "nwdaf_analytics_catalogue.hpp"
 #include <spdlog/spdlog.h>
 #include <ctime>
@@ -59,6 +60,16 @@ json toInvalidParams(const std::vector<SchemaViolation>& v) {
 bool onlyMissing(const std::vector<SchemaViolation>& v) {
     for (const auto& e : v) if (e.reason != "mandatory attribute is missing") return false;
     return true;
+}
+
+// TS 29.571 DateTime (RFC 3339, UTC).
+std::string formatDateTime(std::chrono::system_clock::time_point tp) {
+    const auto t = std::chrono::system_clock::to_time_t(tp);
+    struct tm tm_buf;
+    gmtime_r(&t, &tm_buf);
+    char buf[32];
+    strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm_buf);
+    return buf;
 }
 
 // TS 29.520 V18.14.0 §4.2.2.2.2 / §4.3.2.2: a target period starting in the
@@ -219,10 +230,143 @@ SbiResponse NwdafSbiService::getAnalytics(const SbiRequest& req) {
                        json::array({invalidParam("event-id", "analytics not supported by this NWDAF")}),
                        local.toHex());
 
-    // Unreachable until per-ID Rel-18 mappings are registered (H1.7 Step 3):
-    // an advertised ID always has a mapping.
+    std::optional<NwdafFeatureSet> consumer;
+    if (values.count("supported-features"))
+        consumer = NwdafFeatureSet::parse(values["supported-features"].get<std::string>());
+
+    if (event == "NF_LOAD") return nfLoadInfo(values, consumer, local);
+
+    // An advertised ID always has a mapping; reaching here is a defect.
     spdlog::error("AnalyticsInfo: {} is advertised but has no Rel-18 mapping", event);
     return problem(500, "SYSTEM_FAILURE", "no Rel-18 mapping for " + event);
+}
+
+// ── NF_LOAD ─────────────────────────────────────────────────────────────────
+
+std::optional<NwdafSbiService::Rejection> NwdafSbiService::interpretNfLoad(
+    const json* target, const std::string& target_at,
+    const json& filter, const std::string& filter_at,
+    const json* req, const std::string& req_at,
+    Nwdaf3gppAdapter::NfLoadQuery& query)
+{
+    // Target UE(s): "shall provide … supis or anyUe" (§4.2.2.2.2, §4.3.2.2).
+    // Only the network-wide form is implemented: which AMF/SMF instance
+    // serves a given SUPI is not observed.
+    if (!target) return Rejection{Rejection::TargetMissing, target_at, "mandatory for NF_LOAD"};
+    if (target->contains("supis"))
+        return Rejection{Rejection::TargetIncorrect, target_at,
+                         "/supis: per-UE NF_LOAD is not supported by this NWDAF; use anyUe"};
+    if (!target->value("anyUe", false))
+        return Rejection{Rejection::TargetIncorrect, target_at, "NF_LOAD requires supis or anyUe=true"};
+    for (auto it = target->begin(); it != target->end(); ++it)
+        if (it.key() != "anyUe")
+            spdlog::debug("NF_LOAD: ignoring {}/{} (not applicable to NF_LOAD)", target_at, it.key());
+
+    // Filter attributes. Relevant to NF_LOAD per the prose: nfInstanceIds,
+    // nfSetIds, nfTypes, snssais, nfLoadLvlThds, matchingDir, networkArea
+    // (NfLoadExt), listOfAnaSubsets (EneNA).
+    static const std::set<std::string> unimplemented = {
+        "nfSetIds", "snssais", "nfLoadLvlThds", "matchingDir"};
+    static const std::set<std::string> unsupported_feature = {  // I-2
+        "networkArea", "listOfAnaSubsets"};
+    for (auto it = filter.begin(); it != filter.end(); ++it) {
+        const std::string& k = it.key();
+        if (k == "nfInstanceIds") {
+            for (const auto& id : it.value()) query.nf_instance_ids.insert(id.get<std::string>());
+        } else if (k == "nfTypes") {
+            for (const auto& t : it.value()) query.nf_types.insert(t.get<std::string>());
+        } else if (unimplemented.count(k)) {
+            return Rejection{Rejection::Unsupported, filter_at,
+                             "/" + k + ": not supported for NF_LOAD by this NWDAF"};
+        } else if (unsupported_feature.count(k)) {
+            spdlog::info("NF_LOAD: ignoring {}/{} (feature not supported, I-2)", filter_at, k);
+        } else {
+            spdlog::debug("NF_LOAD: ignoring {}/{} (not applicable to NF_LOAD)", filter_at, k);
+        }
+    }
+
+    // Reporting requirements (EventReportingRequirement).
+    if (req) {
+        static const std::set<std::string> feature_bound = {  // EneNA / Aggregation, I-2
+            "accPerSubset", "offsetPeriod", "timeAnaNeeded", "histAnaTimePeriod",
+            "anaMeta", "anaMetaInd"};
+        for (auto it = req->begin(); it != req->end(); ++it) {
+            const std::string& k = it.key();
+            if (k == "startTs" || k == "endTs") continue;
+            if (k == "maxObjectNbr") { query.max_objects = it.value().get<size_t>(); continue; }
+            // A *preferred* accuracy level; this NWDAF has one level and
+            // serves it (best effort, as "preferred" permits).
+            if (k == "accuracy") continue;
+            if (feature_bound.count(k)) {
+                spdlog::info("NF_LOAD: ignoring {}/{} (feature not supported, I-2)", req_at, k);
+                continue;
+            }
+            if (k == "sampRatio" || k == "maxSupiNbr")
+                return Rejection{Rejection::Unsupported, req_at,
+                                 "/" + k + ": not supported for NF_LOAD by this NWDAF"};
+            spdlog::debug("NF_LOAD: ignoring unknown {}/{}", req_at, k);
+        }
+        // Analytics target period. The collectors hold the current NF load
+        // only: no history for past statistics, no NF-load prediction.
+        const auto now = std::chrono::system_clock::now();
+        bool future = false, past = false;
+        for (const char* k : {"startTs", "endTs"}) {
+            if (!req->contains(k)) continue;
+            auto t = parseDateTime((*req)[k].get<std::string>());
+            if (!t) return Rejection{Rejection::Unsupported, req_at,
+                                     std::string("/") + k + ": not an RFC 3339 date-time"};
+            (*t > now ? future : past) = true;
+        }
+        if (future)
+            return Rejection{Rejection::Unsupported, req_at,
+                             "NF_LOAD predictions are not supported by this NWDAF"};
+        if (past)
+            return Rejection{Rejection::UnavailableData, req_at,
+                             "past NF_LOAD statistics are not held; only the current load is"};
+    }
+    return std::nullopt;
+}
+
+SbiResponse NwdafSbiService::nfLoadInfo(std::map<std::string, json>& values,
+                                        const std::optional<NwdafFeatureSet>& consumer,
+                                        const NwdafFeatureSet& local) {
+    Nwdaf3gppAdapter::NfLoadQuery query;
+    const json no_filter = json::object();
+    auto rej = interpretNfLoad(values.count("tgt-ue") ? &values["tgt-ue"] : nullptr, "tgt-ue",
+                               values.count("event-filter") ? values["event-filter"] : no_filter,
+                               "event-filter",
+                               values.count("ana-req") ? &values["ana-req"] : nullptr, "ana-req",
+                               query);
+    if (rej) {
+        const json ip = json::array({invalidParam(rej->where, rej->reason)});
+        switch (rej->kind) {
+        case Rejection::TargetMissing:
+            return problem(400, "MANDATORY_QUERY_PARAM_MISSING", "tgt-ue is mandatory for NF_LOAD", ip);
+        case Rejection::TargetIncorrect:
+            return problem(400, "MANDATORY_QUERY_PARAM_INCORRECT", rej->reason, ip, local.toHex());
+        case Rejection::Unsupported:
+            return problem(400, "OPTIONAL_QUERY_PARAM_INCORRECT", rej->reason, ip, local.toHex());
+        case Rejection::UnavailableData:
+            // §4.3.2.2: past statistics whose data is unavailable → 500 UNAVAILABLE_DATA.
+            return problem(500, "UNAVAILABLE_DATA", rej->reason);
+        }
+    }
+
+    const json infos = Nwdaf3gppAdapter::nfLoadLevelInfos(engine_.getCurrentNfMetrics(),
+                                                          config_, query);
+    // §4.3.2.2: "If the requested NWDAF Analytics data does not exist, the
+    // NWDAF shall respond with 204 No Content".
+    if (infos.empty()) return {204, "", "", {}};
+
+    const auto now = std::chrono::system_clock::now();
+    json data = {
+        {"timeStampGen",     formatDateTime(now)},
+        // Valid until the collectors next refresh the measurement.
+        {"expiry",           formatDateTime(now + std::chrono::seconds(config_.collection_interval_seconds))},
+        {"nfLoadLevelInfos", infos},
+    };
+    if (consumer) data["suppFeat"] = local.intersect(*consumer).toHex();
+    return {200, "application/json", data.dump(), {}};
 }
 
 // ── Nnwdaf_EventsSubscription ───────────────────────────────────────────────
@@ -327,6 +471,30 @@ NwdafSbiService::evaluateSubscription(const SbiRequest& req, SubscriptionOutcome
                                                          ? "/evtReq/repPeriod"
                                                          : "/eventSubscriptions/" + std::to_string(i) + "/repetitionPeriod",
                                                      "mandatory for PERIODIC reporting")}));
+
+        // Event-specific inputs.
+        const std::string at = "/eventSubscriptions/" + std::to_string(i);
+        if (event == "NF_LOAD") {
+            Nwdaf3gppAdapter::NfLoadQuery query;
+            auto rej = interpretNfLoad(es.contains("tgtUe") ? &es["tgtUe"] : nullptr, at + "/tgtUe",
+                                       es, at,
+                                       es.contains("extraReportReq") ? &es["extraReportReq"] : nullptr,
+                                       at + "/extraReportReq", query);
+            if (rej) {
+                const json ip = json::array({invalidParam(rej->where, rej->reason)});
+                switch (rej->kind) {
+                case Rejection::TargetMissing:
+                    return problem(400, "MANDATORY_IE_MISSING", "tgtUe is mandatory for NF_LOAD", ip);
+                case Rejection::TargetIncorrect:
+                    return problem(400, "MANDATORY_IE_INCORRECT", rej->reason, ip, local.toHex());
+                case Rejection::Unsupported:   // I-3: this event fails, the others may proceed
+                    out.failed.push_back({{"event", event}, {"failureCode", "OTHER"}});
+                    continue;
+                case Rejection::UnavailableData:   // §4.2.2.2.2 → 500 UNAVAILABLE_DATA
+                    return problem(500, "UNAVAILABLE_DATA", rej->reason);
+                }
+            }
+        }
         out.accepted.push_back(i);
     }
 
@@ -344,21 +512,83 @@ NwdafSbiService::evaluateSubscription(const SbiRequest& req, SubscriptionOutcome
     return std::nullopt;
 }
 
+// The resource representation of an accepted subscription: the accepted
+// events only, the negotiated features, and the per-event failures.
+static json representation(const json& request, const std::vector<size_t>& accepted,
+                           const json& failed, const NwdafFeatureSet& negotiated) {
+    json rep = request;
+    json events = json::array();
+    for (size_t i : accepted) events.push_back(request["eventSubscriptions"][i]);
+    rep["eventSubscriptions"] = events;
+    rep["supportedFeatures"]  = negotiated.toHex();
+    if (!failed.empty()) rep["failEventReports"] = failed;
+    else rep.erase("failEventReports");
+    rep.erase("eventNotifications");   // NWDAF-supplied, never taken from the request
+    // I-2: EneNA-only attributes are not applied, so they are not echoed as if
+    // they were in effect.
+    if (rep.contains("notifCorrId")) {
+        spdlog::info("EventsSubscription: ignoring notifCorrId (EneNA not supported)");
+        rep.erase("notifCorrId");
+    }
+    if (rep.contains("evtReq")) rep["evtReq"].erase("notifFlag");
+    return rep;
+}
+
+std::optional<json> NwdafSbiService::eventReport(const json& es,
+                                                 const std::vector<NfMetric>& metrics,
+                                                 const NwdafConfig& config) {
+    const std::string event = es.value("event", "");
+    if (event != "NF_LOAD") return std::nullopt;
+    Nwdaf3gppAdapter::NfLoadQuery query;
+    if (interpretNfLoad(es.contains("tgtUe") ? &es["tgtUe"] : nullptr, "tgtUe", es, "",
+                        es.contains("extraReportReq") ? &es["extraReportReq"] : nullptr,
+                        "extraReportReq", query))
+        return std::nullopt;   // cannot happen for an accepted event
+    json infos = Nwdaf3gppAdapter::nfLoadLevelInfos(metrics, config, query);
+    if (infos.empty()) return std::nullopt;
+    const auto now = std::chrono::system_clock::now();
+    return json{{"event", event},
+                {"timeStampGen", formatDateTime(now)},
+                {"expiry", formatDateTime(now + std::chrono::seconds(config.collection_interval_seconds))},
+                {"nfLoadLevelInfos", infos}};
+}
+
 SbiResponse NwdafSbiService::createSubscription(const SbiRequest& req) {
     SubscriptionOutcome out;
     if (auto err = evaluateSubscription(req, out)) return *err;
-    // Unreachable until an analytics ID is advertised (H1.7 Step 3), which is
-    // when subscription storage and Rel-18 notifications land with it.
-    return problem(500, "SYSTEM_FAILURE", "Rel-18 subscriptions are not yet available");
+
+    json rep = representation(out.request, out.accepted, out.failed, out.negotiated);
+    const std::string id = subs_.createRel18(rep);
+    const std::string location = req.api_root + EVENTS_SUBSCRIPTION_ROOT + "/subscriptions/" + id;
+
+    // §4.2.2.2.2: with immRep, "the reports of the events subscribed, if
+    // available" are included in the response.
+    json body = rep;
+    if (rep.contains("evtReq") && rep["evtReq"].value("immRep", false)) {
+        json reports = json::array();
+        const auto metrics = engine_.getCurrentNfMetrics();
+        for (const auto& es : rep["eventSubscriptions"])
+            if (auto r = eventReport(es, metrics, config_)) reports.push_back(*r);
+        if (!reports.empty()) body["eventNotifications"] = reports;
+    }
+    spdlog::info("EventsSubscription: created {} ({} event(s), {} failed)",
+                 id, rep["eventSubscriptions"].size(), out.failed.size());
+    return {201, "application/json", body.dump(), {{"Location", location}}};
 }
 
 SbiResponse NwdafSbiService::modifySubscription(const SbiRequest& req, const std::string& id) {
-    (void)req;
-    // No Individual NWDAF Event Subscription resource can exist before an
-    // analytics ID is advertised (see createSubscription).
-    return problem(404, "SUBSCRIPTION_NOT_FOUND", "no subscription " + id);
+    if (!subs_.exists(id) || subs_.get(id).kind != "rel18")
+        return problem(404, "SUBSCRIPTION_NOT_FOUND", "no subscription " + id);
+    SubscriptionOutcome out;
+    if (auto err = evaluateSubscription(req, out)) return *err;
+    json rep = representation(out.request, out.accepted, out.failed, out.negotiated);
+    if (!subs_.replaceRel18(id, rep))   // deleted concurrently
+        return problem(404, "SUBSCRIPTION_NOT_FOUND", "no subscription " + id);
+    return {200, "application/json", rep.dump(), {}};
 }
 
 SbiResponse NwdafSbiService::deleteSubscription(const std::string& id) {
-    return problem(404, "SUBSCRIPTION_NOT_FOUND", "no subscription " + id);
+    if (!subs_.exists(id) || subs_.get(id).kind != "rel18" || !subs_.remove(id))
+        return problem(404, "SUBSCRIPTION_NOT_FOUND", "no subscription " + id);
+    return {204, "", "", {}};
 }

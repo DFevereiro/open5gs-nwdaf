@@ -1,4 +1,5 @@
 #pragma once
+#include "nwdaf_3gpp_adapter.hpp"
 #include "nwdaf_analytics.hpp"
 #include "nwdaf_config.hpp"
 #include "nwdaf_schema_validator.hpp"
@@ -79,6 +80,41 @@ private:
     };
     std::optional<SbiResponse> evaluateSubscription(const SbiRequest& req,
                                                     SubscriptionOutcome& out);
+
+public:
+    // Why an NF_LOAD request cannot be served as asked; each operation maps a
+    // kind to its own spec-mandated response (Appendix A.2 / A.4).
+    struct Rejection {
+        enum Kind {
+            TargetMissing,     // tgt-ue / tgtUe absent (conditionally mandatory)
+            TargetIncorrect,   // neither anyUe nor supis, or a target form not implemented
+            Unsupported,       // a relevant attribute this NWDAF does not implement
+            UnavailableData,   // past statistics requested; data not held (UNAVAILABLE_DATA)
+        } kind;
+        std::string where;     // query parameter name or JSON Pointer
+        std::string reason;
+    };
+
+    // Interpret the NF_LOAD inputs (TS 29.520 V18.14.0 §4.2.2.2.2 / §4.3.2.2).
+    // `target`, `filter` and `req` may be null. `*_at` label where each came
+    // from, for the error. Fills `query` when nullopt is returned.
+    static std::optional<Rejection> interpretNfLoad(
+        const nlohmann::json* target, const std::string& target_at,
+        const nlohmann::json& filter, const std::string& filter_at,
+        const nlohmann::json* req, const std::string& req_at,
+        Nwdaf3gppAdapter::NfLoadQuery& query);
+
+    // The EventNotification for one accepted EventSubscription, from current
+    // measurements; nullopt when no analytics data exists now. Shared by the
+    // immediate report and the notifier.
+    static std::optional<nlohmann::json> eventReport(const nlohmann::json& event_subscription,
+                                                     const std::vector<NfMetric>& metrics,
+                                                     const NwdafConfig& config);
+
+private:
+    SbiResponse nfLoadInfo(std::map<std::string, nlohmann::json>& values,
+                           const std::optional<NwdafFeatureSet>& consumer,
+                           const NwdafFeatureSet& local);
 
     NwdafAnalyticsEngine&   engine_;
     NwdafSubscriptionStore& subs_;

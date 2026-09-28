@@ -75,6 +75,45 @@ std::string NwdafSubscriptionStore::create(const json& body) {
     return sub.sub_id;
 }
 
+// The operator-API view of a Rel-18 subscription (first event, notification
+// URI) so /nwdaf-analytics/v1/subscriptions still lists it meaningfully.
+static void fillRel18(Subscription& sub, const json& representation) {
+    sub.kind          = "rel18";
+    sub.rel18_json    = representation.dump();
+    sub.analytics_id  = representation["eventSubscriptions"][0]["event"].get<std::string>();
+    sub.notif_uri     = representation.value("notificationURI", "");
+    sub.rep_period_seconds = 0;   // Rel-18 timing is per event, from rel18_json
+    sub.max_report_nbr     = 0;
+}
+
+std::string NwdafSubscriptionStore::createRel18(const json& representation) {
+    Subscription sub;
+    sub.sub_id         = generateSubId();
+    sub.created_at_iso = nowISO();
+    sub.status         = "ACTIVE";
+    fillRel18(sub, representation);
+    {
+        std::lock_guard<std::mutex> lk(mutex_);
+        store_[sub.sub_id] = sub;
+    }
+    if (backend_) backend_->persist(sub);
+    return sub.sub_id;
+}
+
+bool NwdafSubscriptionStore::replaceRel18(const std::string& sub_id, const json& representation) {
+    Subscription copy;
+    {
+        std::lock_guard<std::mutex> lk(mutex_);
+        auto it = store_.find(sub_id);
+        if (it == store_.end() || it->second.kind != "rel18") return false;
+        fillRel18(it->second, representation);
+        it->second.report_count = 0;
+        copy = it->second;
+    }
+    if (backend_) backend_->persist(copy);
+    return true;
+}
+
 bool NwdafSubscriptionStore::exists(const std::string& sub_id) const {
     std::lock_guard<std::mutex> lk(mutex_);
     return store_.count(sub_id) > 0;
@@ -133,8 +172,33 @@ static const char* SUBS_DDL =
     "  sub_id TEXT PRIMARY KEY,"
     "  analytics_id TEXT, notif_uri TEXT, notif_id TEXT,"
     "  rep_period INTEGER, max_report_nbr INTEGER, report_count INTEGER,"
-    "  created_at TEXT, status TEXT"
+    "  created_at TEXT, status TEXT,"
+    "  kind TEXT DEFAULT 'legacy', rel18_json TEXT DEFAULT ''"
     ");";
+
+// H1.7: tables created before Rel-18 subscriptions lack kind / rel18_json.
+static void migrateSubsSchema(sqlite3* db) {
+    bool has_kind = false;
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db, "PRAGMA table_info(nwdaf_subscriptions);", -1, &stmt, nullptr) != SQLITE_OK)
+        return;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        const char* name = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+        if (name && std::string(name) == "kind") has_kind = true;
+    }
+    sqlite3_finalize(stmt);
+    if (has_kind) return;
+    char* err = nullptr;
+    if (sqlite3_exec(db,
+            "ALTER TABLE nwdaf_subscriptions ADD COLUMN kind TEXT DEFAULT 'legacy';"
+            "ALTER TABLE nwdaf_subscriptions ADD COLUMN rel18_json TEXT DEFAULT '';",
+            nullptr, nullptr, &err) != SQLITE_OK) {
+        spdlog::warn("H1.7: subscription DB migration failed: {}", err);
+        sqlite3_free(err);
+        return;
+    }
+    spdlog::info("H1.7: subscription DB migrated (kind, rel18_json)");
+}
 
 SqliteSubscriptionBackend::SqliteSubscriptionBackend(const std::string& db_path) {
     if (sqlite3_open(db_path.c_str(), &db_) != SQLITE_OK) {
@@ -149,6 +213,7 @@ SqliteSubscriptionBackend::SqliteSubscriptionBackend(const std::string& db_path)
         spdlog::warn("PROD-02: Subscription DB DDL error: {}", err);
         sqlite3_free(err);
     }
+    migrateSubsSchema(db_);
     spdlog::info("PROD-02: subscription DB opened at {}", db_path);
 }
 
@@ -161,8 +226,9 @@ void SqliteSubscriptionBackend::persist(const Subscription& sub) {
     const char* sql =
         "INSERT OR REPLACE INTO nwdaf_subscriptions"
         " (sub_id, analytics_id, notif_uri, notif_id,"
-        "  rep_period, max_report_nbr, report_count, created_at, status)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);";
+        "  rep_period, max_report_nbr, report_count, created_at, status,"
+        "  kind, rel18_json)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);";
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return;
     sqlite3_bind_text(stmt, 1, sub.sub_id.c_str(),        -1, SQLITE_TRANSIENT);
@@ -174,6 +240,8 @@ void SqliteSubscriptionBackend::persist(const Subscription& sub) {
     sqlite3_bind_int(stmt,  7, sub.report_count);
     sqlite3_bind_text(stmt, 8, sub.created_at_iso.c_str(),-1, SQLITE_TRANSIENT);
     sqlite3_bind_text(stmt, 9, sub.status.c_str(),        -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt,10, sub.kind.c_str(),          -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt,11, sub.rel18_json.c_str(),    -1, SQLITE_TRANSIENT);
     sqlite3_step(stmt);
     sqlite3_finalize(stmt);
 }
@@ -194,7 +262,8 @@ std::vector<Subscription> SqliteSubscriptionBackend::loadAll() {
     if (!db_) return out;
     const char* sql =
         "SELECT sub_id, analytics_id, notif_uri, notif_id,"
-        "       rep_period, max_report_nbr, report_count, created_at, status"
+        "       rep_period, max_report_nbr, report_count, created_at, status,"
+        "       kind, rel18_json"
         " FROM nwdaf_subscriptions;";
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return out;
@@ -213,6 +282,8 @@ std::vector<Subscription> SqliteSubscriptionBackend::loadAll() {
         s.report_count      = sqlite3_column_int(stmt, 6);
         s.created_at_iso    = col(7);
         s.status            = col(8);
+        s.kind              = col(9).empty() ? "legacy" : col(9);
+        s.rel18_json        = col(10);
         out.push_back(std::move(s));
     }
     sqlite3_finalize(stmt);

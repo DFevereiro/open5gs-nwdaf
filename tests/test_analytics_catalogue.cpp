@@ -4,6 +4,8 @@
 #include "nwdaf_analytics_catalogue.hpp"
 #include "nwdaf_subscription.hpp"
 #include <algorithm>
+#include <cstdio>
+#include <fstream>
 #include <memory>
 
 using Cat = NwdafAnalyticsCatalogue;
@@ -34,6 +36,31 @@ TEST_CASE("H1.7: advertised ⊆ implemented ⊆ known") {
     NwdafConfig cfg;
     REQUIRE(isSubset(Cat::REL18_IMPLEMENTED, Cat::KNOWN_REL18));
     REQUIRE(isSubset(Cat::rel18Advertised(cfg), Cat::REL18_IMPLEMENTED));
+}
+
+TEST_CASE("H1.7: advertisement follows configured capability, not runtime data") {
+    // rel18Advertised takes configuration only — there is no runtime input
+    // that could make it flap. NF_LOAD needs an NF instance-ID source.
+    NwdafConfig cfg;
+    REQUIRE(Cat::REL18_IMPLEMENTED.count("NF_LOAD") == 1);
+    REQUIRE(Cat::rel18Advertised(cfg).count("NF_LOAD") == 0);
+    cfg.nf_instance_ids = {{"AMF", "11111111-1111-4111-8111-111111111111"}};
+    REQUIRE(Cat::rel18Advertised(cfg).count("NF_LOAD") == 1);
+}
+
+TEST_CASE("H1.7: nf_instance_ids must name monitored NF types and hold UUIDs") {
+    const std::string path = "/tmp/nwdaf_nf_ids_config.yaml";
+    auto load = [&](const std::string& ids) {
+        std::ofstream(path) << "nwdaf:\n"
+                            << "  nf_instance_id: \"00000000-0000-0000-0000-000000000000\"\n"
+                            << "  nf_instance_ids:\n" << ids;
+        return NwdafConfig::load(path);
+    };
+    REQUIRE(load("    AMF: \"11111111-1111-4111-8111-111111111111\"\n")
+                .nf_instance_ids.at("AMF") == "11111111-1111-4111-8111-111111111111");
+    REQUIRE_THROWS(load("    AMF: \"not-a-uuid\"\n"));
+    REQUIRE_THROWS(load("    XYZ: \"11111111-1111-4111-8111-111111111111\"\n"));
+    std::remove(path.c_str());
 }
 
 TEST_CASE("H1.7: legacy spellings map to Rel-18 IDs on the operator API") {
@@ -87,3 +114,40 @@ TEST_CASE("H1.4: a subscription created with a legacy ID is stored canonically")
                             {"notifUri", "http://127.0.0.1:9999/cb"}});
     REQUIRE(store.get(id).analytics_id == "QOS_SUSTAINABILITY");
 }
+
+#ifdef NWDAF_HAS_SQLITE
+#include <sqlite3.h>
+
+TEST_CASE("H1.7: a pre-Rel-18 subscription database is migrated in place") {
+    const std::string path = "/tmp/nwdaf_subs_migration.db";
+    std::remove(path.c_str());
+    {   // The schema and a row as an earlier release wrote them.
+        sqlite3* db = nullptr;
+        REQUIRE(sqlite3_open(path.c_str(), &db) == SQLITE_OK);
+        REQUIRE(sqlite3_exec(db,
+            "CREATE TABLE nwdaf_subscriptions (sub_id TEXT PRIMARY KEY,"
+            " analytics_id TEXT, notif_uri TEXT, notif_id TEXT, rep_period INTEGER,"
+            " max_report_nbr INTEGER, report_count INTEGER, created_at TEXT, status TEXT);"
+            "INSERT INTO nwdaf_subscriptions VALUES ('sub-old','NF_LOAD','http://x/cb','',60,0,0,"
+            "'2026-01-01T00:00:00Z','ACTIVE');",
+            nullptr, nullptr, nullptr) == SQLITE_OK);
+        sqlite3_close(db);
+    }
+    {
+        NwdafSubscriptionStore store(std::make_shared<SqliteSubscriptionBackend>(path));
+        REQUIRE(store.get("sub-old").kind == "legacy");
+        json rep = {{"eventSubscriptions", {{{"event", "NF_LOAD"}}}},
+                    {"notificationURI", "http://127.0.0.1:9/n"}};
+        const std::string id = store.createRel18(rep);
+        REQUIRE(store.get(id).kind == "rel18");
+    }
+    {   // Both rows survive a restart with their kind.
+        NwdafSubscriptionStore store(std::make_shared<SqliteSubscriptionBackend>(path));
+        int legacy = 0, rel18 = 0;
+        for (const auto& s : store.listAll()) (s.kind == "rel18" ? rel18 : legacy)++;
+        REQUIRE(legacy == 1);
+        REQUIRE(rel18 == 1);
+    }
+    std::remove(path.c_str());
+}
+#endif

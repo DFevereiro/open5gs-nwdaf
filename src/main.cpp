@@ -207,7 +207,7 @@ int main(int argc, char* argv[]) {
     // PROD-03: pass server's atomic counters so /metrics can expose them
 #ifdef NWDAF_ENABLE_PUSH_DELIVERY
     NwdafNotifier notifier(subs, engine, 5,
-                           &server.notif_total_, &server.notif_failures_);
+                           &server.notif_total_, &server.notif_failures_, config);
     notifier.start();
 #endif
 

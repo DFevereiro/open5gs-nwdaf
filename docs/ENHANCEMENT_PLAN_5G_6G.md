@@ -41,7 +41,7 @@ Last updated **2026-08-23** (release `v1.1.0`).
 | H1.4 — Rel-17/18 catalogue | [#26](https://github.com/cem8kaya/open5gs-nwdaf/issues/26) | **Partial**: `SM_CONGESTION`, `REDUNDANT_TRANSMISSION` (Rel-18 name `RED_TRANS_EXP`) and `DISPERSION` shipped; `DN_PERFORMANCE`, `USER_DATA_CONGESTION` and `WLAN_PERFORMANCE` are blocked on H1.1–H1.3 · *adjusted for Rel-18 (§3a)* |
 | H1.5 — MOS / service-experience E-model | [#27](https://github.com/cem8kaya/open5gs-nwdaf/issues/27) | **Done** |
 | H1.6 — OpenAPI 3.0 + conformance in CI | [#28](https://github.com/cem8kaya/open5gs-nwdaf/issues/28) | **Done** for the operator API · *extended for Rel-18: official-schema conformance (§3a)* |
-| H1.7 — 3GPP Nnwdaf SBI conformance (Rel-18) | — | Not started |
+| H1.7 — 3GPP Nnwdaf SBI conformance (Rel-18) | — | **In progress**: 3GPP resources, official-schema validation, supported features and failure semantics done; NF_LOAD mapped, with subscriptions and notifications; other IDs next |
 | H1.8 — HTTP/2 SBI transport + compliance profile | — | Not started |
 | H1.9 — Truthful Rel-18 NRF profile, lifecycle, discovery | — | Not started |
 | H1.10 — SBI security: mTLS, OAuth2 token validation, NRF client TLS | — | Not started |

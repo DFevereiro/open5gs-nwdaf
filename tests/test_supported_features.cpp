@@ -68,9 +68,13 @@ TEST_CASE("H1.7: S-1 — SM_CONGESTION has no feature on Nnwdaf_EventsSubscripti
 }
 
 TEST_CASE("H1.7: the local bitmask covers exactly the advertised analytics") {
-    // Nothing is advertised until the per-ID Rel-18 mappings land, so the
-    // NWDAF must not claim any analytics feature yet.
+    // Without NF instance IDs NF_LOAD is not advertised: no feature is claimed.
     NwdafConfig cfg;
     REQUIRE(SF::local(NnwdafApi::AnalyticsInfo, cfg).toHex() == "0");
     REQUIRE(SF::local(NnwdafApi::EventsSubscription, cfg).toHex() == "0");
+
+    // With them, NfLoad — bit 8 on AnalyticsInfo, bit 7 on EventsSubscription.
+    cfg.nf_instance_ids = {{"AMF", "11111111-1111-4111-8111-111111111111"}};
+    REQUIRE(SF::local(NnwdafApi::AnalyticsInfo, cfg).toHex() == "80");
+    REQUIRE(SF::local(NnwdafApi::EventsSubscription, cfg).toHex() == "40");
 }

@@ -24,7 +24,8 @@ public:
                   NwdafAnalyticsEngine&   engine,
                   int poll_interval_seconds = 5,
                   std::atomic<uint64_t>*  notif_total    = nullptr,
-                  std::atomic<uint64_t>*  notif_failures = nullptr);
+                  std::atomic<uint64_t>*  notif_failures = nullptr,
+                  const NwdafConfig&      config         = NwdafConfig());
 
     void start();
     void stop();
@@ -32,6 +33,13 @@ public:
 private:
     void deliveryLoop();
     void deliver(const Subscription& sub);
+    // H1.7: Rel-18 Nnwdaf_EventsSubscription_Notify (TS 29.520 V18.14.0
+    // §4.2.2.4): NnwdafEventsSubscriptionNotification with the
+    // 3gpp-Sbi-Callback header; per-event periods, ONE_TIME, maxReportNbr and
+    // monDur from the stored representation.
+    void deliverRel18(const Subscription& sub);
+
+    NwdafConfig             config_;
 
     NwdafSubscriptionStore& subs_;
     NwdafAnalyticsEngine&   engine_;

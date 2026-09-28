@@ -16,6 +16,12 @@ public:
     int         sbi_port = 7779;
 
     std::map<std::string, std::string> nf_service_names;
+
+    // H1.7: NF type → NF instance ID (UUID) of each monitored NF, needed by the
+    // Rel-18 NfLoadLevelInformation (nfInstanceId is mandatory). An Open5GS
+    // deployment mechanism until NRF discovery (H1.9) supplies the IDs; NF_LOAD
+    // is advertised on the 3GPP interfaces only when this map is configured.
+    std::map<std::string, std::string> nf_instance_ids;
     std::vector<std::string> throughput_interfaces;
     int    throughput_history_size      = 360;
     int    collection_interval_seconds  = 10;

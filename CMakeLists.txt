@@ -108,6 +108,7 @@ set(NWDAF_LIB_SOURCES
     src/nwdaf_schema_validator.cpp
     src/nwdaf_supported_features.cpp
     src/nwdaf_sbi.cpp
+    src/nwdaf_3gpp_adapter.cpp
     src/nwdaf_collector.cpp
     src/nwdaf_analytics.cpp
     src/nwdaf_server.cpp

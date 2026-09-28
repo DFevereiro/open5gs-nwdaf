@@ -17,9 +17,11 @@ const std::set<std::string> NwdafAnalyticsCatalogue::OPERATOR_IDS = {
     "SM_CONGESTION", "RED_TRANS_EXP", "DISPERSION"
 };
 
-// Empty until the per-ID Rel-18 mappings land (H1.7, Step 3 of the Rel-18
-// plan); an ID is added here together with its official-schema conformance test.
-const std::set<std::string> NwdafAnalyticsCatalogue::REL18_IMPLEMENTED = {};
+// An ID is added here together with its official-schema conformance test
+// (H1.7, Step 3 of the Rel-18 plan).
+const std::set<std::string> NwdafAnalyticsCatalogue::REL18_IMPLEMENTED = {
+    "NF_LOAD",
+};
 
 std::string NwdafAnalyticsCatalogue::canonicalOperatorId(const std::string& id) {
     // COMP-05 / H1.4: pre-Rel-18 spellings kept working on the operator API.
@@ -28,8 +30,13 @@ std::string NwdafAnalyticsCatalogue::canonicalOperatorId(const std::string& id) 
     return id;
 }
 
-std::set<std::string> NwdafAnalyticsCatalogue::rel18Advertised(const NwdafConfig&) {
-    // Configuration-dependent capability checks are added with the IDs that
-    // need them (e.g. NETWORK_PERFORMANCE requires a configured served TAI list).
-    return REL18_IMPLEMENTED;
+std::set<std::string> NwdafAnalyticsCatalogue::rel18Advertised(const NwdafConfig& cfg) {
+    std::set<std::string> out;
+    for (const auto& id : REL18_IMPLEMENTED) {
+        // NfLoadLevelInformation requires nfInstanceId: without a configured
+        // instance-ID source the NWDAF cannot produce NF_LOAD truthfully.
+        if (id == "NF_LOAD" && cfg.nf_instance_ids.empty()) continue;
+        out.insert(id);
+    }
+    return out;
 }

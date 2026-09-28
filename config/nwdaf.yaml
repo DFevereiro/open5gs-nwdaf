@@ -20,6 +20,16 @@ nwdaf:
     BSF:  "bsfd"
     NSSF: "nssfd"
 
+  # NF instance IDs (the nfInstanceId each Open5GS NF registers with the NRF).
+  # Required for Rel-18 NF_LOAD on the 3GPP interfaces: NF_LOAD is advertised
+  # only when this map is set. Use your deployment's real IDs — never
+  # placeholders, or the NWDAF would report load for NF instances that do not
+  # exist. Keys must appear in nf_service_names.
+  # nf_instance_ids:
+  #   AMF: "<amf nfInstanceId>"
+  #   SMF: "<smf nfInstanceId>"
+  #   UPF: "<upf nfInstanceId>"
+
   # Data collection — UPF tunnel interfaces for throughput measurement
   # gtp5g bypasses user-space capture; read /sys/class/net directly
   throughput_interfaces:

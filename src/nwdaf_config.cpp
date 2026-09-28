@@ -50,6 +50,21 @@ NwdafConfig NwdafConfig::load(const std::string& yaml_path) {
                                  {"NRF","nrfd"},{"UDR","udrd"},{"BSF","bsfd"},{"NSSF","nssfd"}};
     }
 
+    // H1.7: NF instance IDs of the monitored NFs (Open5GS deployment mechanism
+    // until NRF discovery, H1.9). Keys must be monitored NF types.
+    if (n["nf_instance_ids"]) {
+        for (const auto& kv : n["nf_instance_ids"]) {
+            const std::string type = kv.first.as<std::string>();
+            const std::string id   = kv.second.as<std::string>();
+            if (!cfg.nf_service_names.count(type))
+                throw std::runtime_error("nf_instance_ids: " + type +
+                                         " is not a monitored NF type (see nf_service_names)");
+            if (!is_valid_uuid(id))
+                throw std::runtime_error("nf_instance_ids: " + type + " is not a valid UUID: " + id);
+            cfg.nf_instance_ids[type] = id;
+        }
+    }
+
     if (n["throughput_interfaces"]) {
         for (const auto& iface : n["throughput_interfaces"])
             cfg.throughput_interfaces.push_back(iface.as<std::string>());

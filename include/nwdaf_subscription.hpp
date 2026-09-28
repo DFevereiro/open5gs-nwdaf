@@ -18,6 +18,11 @@ struct Subscription {
     int         report_count = 0;   // incremented by NwdafNotifier on each successful delivery
     std::string created_at_iso;
     std::string status;
+    // H1.7: "legacy" (operator API) or "rel18" (Nnwdaf_EventsSubscription).
+    std::string kind = "legacy";
+    // Rel-18 only: the resource representation — the accepted events,
+    // failEventReports and the negotiated supportedFeatures — as JSON.
+    std::string rel18_json;
 };
 
 // PROD-02: pluggable persistence backend for NwdafSubscriptionStore.
@@ -60,6 +65,11 @@ public:
         std::shared_ptr<NwdafSubscriptionBackend> backend = nullptr);
 
     std::string               create(const json& body);
+    // H1.7: store an Individual NWDAF Event Subscription; returns its id.
+    std::string               createRel18(const json& representation);
+    // H1.7: replace a Rel-18 subscription's representation (PUT); false when
+    // no Rel-18 subscription has that id.
+    bool                      replaceRel18(const std::string& sub_id, const json& representation);
     bool                      exists(const std::string& sub_id) const;
     Subscription              get(const std::string& sub_id) const;
     bool                      remove(const std::string& sub_id);
