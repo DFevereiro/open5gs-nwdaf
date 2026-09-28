@@ -43,7 +43,7 @@ The **NWDAF (Network Data Analytics Function)** is the intelligence layer of the
 | 🔔 **Subscriptions** | `Nnwdaf_EventsSubscription` create/list/get/delete with push notification delivery (background notifier thread) |
 | 🗄️ **Persistence** | SQLite-backed throughput history and subscription store — survives restarts |
 | 🛰️ **NRF Integration** | Registration + heartbeat per TS 29.510 §5.3.2.4 |
-| 🔐 **Security** | TLS on the SBI with opt-in mutual TLS (`tls_ca_file`), per-IP + global token-bucket rate limiting, hardened build flags (`-D_FORTIFY_SOURCE=2`, PIE, RELRO). OAuth 2.0 access-token validation is **not yet implemented** (roadmap H1.10). Today `oauth_enabled` only checks that a Bearer token is present. |
+| 🔐 **Security** | TLS on the SBI with opt-in mutual TLS (`tls_ca_file`), per-IP + global token-bucket rate limiting, hardened build flags (`-D_FORTIFY_SOURCE=2`, PIE, RELRO). OAuth 2.0 access-token validation on the 3GPP interfaces (`oauth_enabled`). |
 | 📈 **Observability** | Prometheus `/metrics`, Grafana dashboard JSON, health/readiness probes |
 | 🖥️ **Web Dashboard** | React + Recharts "NWDAF Intelligence" UI: live throughput, anomaly detection, MOS scores, traffic simulator, subscription management |
 | 🧪 **Tested** | 85 Catch2 test cases: unit, integration, and a mock Open5GS environment |
@@ -309,6 +309,7 @@ Everything deployment-specific lives in [`config/nwdaf.yaml`](config/nwdaf.yaml)
 | `history_backend` / `history_db_path` | `sqlite` | Restart-safe history + subscription persistence |
 | `rate_limit_per_ip_rps` / `rate_limit_global_rps` | `10` / `100` | Token-bucket SBI rate limits (`0` = off) |
 | `network_performance_weights` | `0.6/0.2/0.2` | NF-health / DL / PDU weights (validated to sum to 1.0) |
+| `oauth_enabled` + `oauth_nrf_public_key_file` / `oauth_shared_secret_file` | `false` | OAuth 2.0 access tokens on the 3GPP interfaces (TS 33.501 §13.4.1): signature, claims, scope and expiry are validated. The key is the NRF's public key (RS256/ES256) or a shared secret (HS256). **Keep it off with Open5GS**, which does not issue or send tokens. Needs a TLS build. |
 | `tls_enabled` + cert/key/CA paths | `false` | TLS on the SBI. Setting `tls_ca_file` enables mutual TLS: clients must present a certificate signed by that CA, and an unreadable CA stops startup. The NRF client verifies the NRF against the same CA, or against the system trust store if none is set. |
 
 ### Build options

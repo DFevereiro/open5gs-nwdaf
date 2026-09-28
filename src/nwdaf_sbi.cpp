@@ -41,6 +41,13 @@ SbiResponse problem(int status, const std::string& cause, const std::string& det
     return {status, "application/problem+json", p.dump(), {}};
 }
 
+// H1.10 (I-6): the access token's analyticsIdList does not cover the request
+// — TS 29.500 §6.7.3 insufficient_scope.
+SbiResponse analyticsNotAuthorized(const SbiRequest& req, const char* root, const char* scope) {
+    return {403, "", "", {{"WWW-Authenticate", "Bearer realm=\"" + req.api_root + root +
+                           "\", error=\"insufficient_scope\", scope=\"" + scope + "\""}}};
+}
+
 SbiResponse methodNotAllowed(const std::string& allow) {
     // TS 29.500 §5.2.7.2: 405 with an Allow header; no cause needed.
     return {405, "", "", {{"Allow", allow}}};
@@ -225,6 +232,8 @@ SbiResponse NwdafSbiService::getAnalytics(const SbiRequest& req) {
     // Capability: an analytics ID is served only when its gating feature is
     // part of this NWDAF's own feature set (I-1).
     const std::string event = values["event-id"].get<std::string>();
+    if (req.authorized_analytics && !req.authorized_analytics->count(event))
+        return analyticsNotAuthorized(req, ANALYTICS_INFO_ROOT, "nnwdaf-analyticsinfo");
     const auto feature = NwdafSupportedFeatures::eventFeature(NnwdafApi::AnalyticsInfo, event);
     if (!feature || !local.has(*feature))
         return problem(400, "MANDATORY_QUERY_PARAM_INCORRECT",
@@ -395,6 +404,12 @@ NwdafSbiService::evaluateSubscription(const SbiRequest& req, SubscriptionOutcome
                        toInvalidParams(violations));
 
     const json& body = out.request;
+
+    // H1.10 (I-6): every requested analytics must be within the token's analyticsIdList.
+    if (req.authorized_analytics)
+        for (const auto& es : body["eventSubscriptions"])
+            if (!req.authorized_analytics->count(es["event"].get<std::string>()))
+                return analyticsNotAuthorized(req, EVENTS_SUBSCRIPTION_ROOT, "nnwdaf-eventssubscription");
 
     // 2. Prose rules.
     // Table 5.1.6.2.2-1: notificationURI "shall be supplied … in the HTTP

@@ -11,6 +11,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -31,6 +32,10 @@ struct SbiRequest {
     std::map<std::string, std::string> headers;      // lower-case names
     std::string body;
     std::string api_root;   // "{scheme}://{authority}" the consumer addressed
+    // H1.10: NF Instance ID in the consumer's TLS client certificate ("" = none).
+    std::string client_nf_instance_id;
+    // H1.10 (I-6): the access token's analyticsIdList, when it carried one.
+    std::optional<std::set<std::string>> authorized_analytics;
 };
 
 struct SbiResponse {

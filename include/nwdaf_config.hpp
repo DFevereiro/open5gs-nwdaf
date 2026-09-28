@@ -77,8 +77,13 @@ public:
     // §13.1): clients without a certificate signed by this CA are refused.
     std::string tls_ca_file;
 
-    // P1-4: OAuth 2.0 access-token auth
-    bool oauth_enabled = false;
+    // P1-4 / H1.10: OAuth 2.0 access tokens on the 3GPP interfaces (TS 33.501
+    // §13.4.1). When enabled, requests without a valid token are rejected.
+    // The verification key is a deployment mechanism: the NRF's public key
+    // (RS256/ES256) or a secret shared with it (HS256). Needs NWDAF_USE_TLS.
+    bool        oauth_enabled = false;
+    std::string oauth_nrf_public_key_file;
+    std::string oauth_shared_secret_file;
 
     // H1.6: OpenAPI document served from GET /nwdaf-analytics/v1/openapi.
     // Optional — when the file is absent the endpoint reports 404 and the rest

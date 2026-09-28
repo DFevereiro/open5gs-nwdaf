@@ -17,6 +17,7 @@
 #include <stdexcept>
 
 #ifdef NWDAF_USE_TLS
+#include "nwdaf_oauth.hpp"
 #include <openssl/err.h>
 #include <openssl/ssl.h>
 #endif
@@ -74,6 +75,7 @@ struct Session {
     const NwdafH2Server::Handler* handler;
     std::string remote;
     bool tls;
+    std::string client_nf_instance_id;   // from the TLS client certificate (H1.10)
     std::map<int32_t, std::unique_ptr<Stream>> streams;
 };
 
@@ -131,6 +133,7 @@ void respond(nghttp2_session* session, int32_t stream_id, Session& sess, Stream&
         }
     }
     req.headers  = st.headers;
+    req.client_nf_instance_id = sess.client_nf_instance_id;
     req.body     = st.body;
     req.api_root = std::string(sess.tls ? "https" : "http") + "://" + st.authority;
 
@@ -342,7 +345,15 @@ void NwdafH2Server::serve(int fd, std::string remote) {
     }
 #endif
 
-    Session sess{&handler_, remote, options_.tls, {}};
+    Session sess{&handler_, remote, options_.tls, "", {}};
+#ifdef NWDAF_USE_TLS
+    if (conn.ssl) {
+        if (X509* cert = SSL_get1_peer_certificate(conn.ssl)) {
+            sess.client_nf_instance_id = nwdafNfInstanceIdFromCert(cert);
+            X509_free(cert);
+        }
+    }
+#endif
     nghttp2_session_callbacks* cbs = nullptr;
     nghttp2_session_callbacks_new(&cbs);
     nghttp2_session_callbacks_set_on_begin_headers_callback(cbs, onBeginHeaders);

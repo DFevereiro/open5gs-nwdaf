@@ -82,11 +82,13 @@ publication of the same version:
 - The same numbering scheme for the other baseline specifications, for example
   ETSI TS 129 500 for TS 29.500 and ETSI TS 133 501 for TS 33.501.
 
-### B-2 — TS 29.510 AccessToken artifact: Requires verification
+### B-2 — TS 29.510 AccessToken artifact: **Closed 2026-09-28**
 
-`TS29510_Nnrf_AccessToken.yaml` is stamped V18.8.0, which is older than the V18.11.0
-baseline. This is consistent with the artifact simply not changing since then, but
-it hasn't been confirmed against the V18.11.0 change history.
+`TS29510_Nnrf_AccessToken.yaml` is stamped V18.8.0, which is older than the
+V18.11.0 baseline. Annex A of ETSI TS 129 510 V18.11.0 (2026-03) itself declares
+the "NRF OAuth2" API as version `1.3.1`, stamped "3GPP TS 29.510 V18.8.0". That
+matches the pinned artifact: the AccessToken API has not changed since V18.8.0.
+No amendment is needed.
 
 ## Change policy
 

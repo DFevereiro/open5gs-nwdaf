@@ -151,6 +151,9 @@ endif()
 if(NWDAF_USE_HTTP2)
     list(APPEND NWDAF_LIB_SOURCES src/nwdaf_h2_server.cpp)
 endif()
+if(NWDAF_USE_TLS)
+    list(APPEND NWDAF_LIB_SOURCES src/nwdaf_oauth.cpp)   # H1.10: OAuth2 token validation
+endif()
 
 add_library(nwdaf_lib ${NWDAF_LIB_SOURCES})
 

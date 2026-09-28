@@ -17,6 +17,9 @@ NwdafServer::NwdafServer(NwdafAnalyticsEngine& engine,
                          std::shared_ptr<NwdafNfIdResolver> resolver)
     : engine_(engine), subs_(subs), config_(config),
       sbi_(engine, subs, config, std::move(resolver)),
+#ifdef NWDAF_USE_TLS
+      oauth_schema_(config.openapi_3gpp_dir),
+#endif
       rate_limiter_(config.rate_limit_per_ip_rps, config.rate_limit_global_rps)
 {
     // ARCH-05: instantiate SSLServer when TLS is enabled and compiled in,
@@ -51,6 +54,15 @@ NwdafServer::NwdafServer(NwdafAnalyticsEngine& engine,
     }
     svr_ = std::make_unique<httplib::Server>();
 #endif
+    // H1.10: OAuth 2.0 access tokens on the 3GPP interfaces (fail closed).
+    if (config.oauth_enabled) {
+#ifdef NWDAF_USE_TLS
+        token_validator_ = std::make_unique<NwdafAccessTokenValidator>(
+            config, NwdafAccessTokenValidator::keysFromConfig(config), &oauth_schema_);
+#else
+        throw std::runtime_error("oauth_enabled requires a build with NWDAF_USE_TLS");
+#endif
+    }
     setupRoutes();
 }
 
@@ -91,6 +103,10 @@ void NwdafServer::setupRoutes() {
         if (config_.oauth_enabled) {
             // Allow healthcheck without auth
             if (req.path == "/nwdaf-analytics/v1/health") {
+                return httplib::Server::HandlerResponse::Unhandled;
+            }
+            // H1.10: the 3GPP interfaces validate the token in serve3gpp().
+            if (NwdafSbiService::handles(req.path)) {
                 return httplib::Server::HandlerResponse::Unhandled;
             }
             if (req.has_header("Authorization")) {
@@ -222,16 +238,48 @@ const char* NwdafServer::transportProfile(const NwdafConfig& config) {
 SbiResponse NwdafServer::serve3gpp(const SbiRequest& req, const std::string& remote_addr) {
     if (!NwdafSbiService::handles(req.path))
         return {404, "", "", {}};
-    if (config_.oauth_enabled) {
-        // Same presence check as the HTTP/1.1 pre-routing handler (P1-4);
-        // access-token validation is roadmap H1.10.
+#ifdef NWDAF_USE_TLS
+    SbiRequest authorized;
+    if (token_validator_) {
+        // H1.10: TS 33.501 §13.4.1.1.2 step 2; responses per TS 29.500 §6.7.3.
+        const bool info = req.path.rfind(NwdafSbiService::ANALYTICS_INFO_ROOT, 0) == 0;
+        const std::string service = info ? "nnwdaf-analyticsinfo" : "nnwdaf-eventssubscription";
+        const std::string realm = req.api_root +
+            (info ? NwdafSbiService::ANALYTICS_INFO_ROOT : NwdafSbiService::EVENTS_SUBSCRIPTION_ROOT);
         auto it = req.headers.find("authorization");
-        if (it == req.headers.end() || it->second.rfind("Bearer ", 0) != 0 || it->second.size() <= 7)
-            return {401, "application/problem+json",
-                    json{{"title", "Unauthorized"}, {"status", 401},
-                         {"detail", "missing or invalid OAuth 2.0 access token"}}.dump(),
-                    {{"WWW-Authenticate", "Bearer"}}};
+        const NwdafTokenCheck tc = token_validator_->check(
+            it == req.headers.end() ? "" : it->second, service, req.client_nf_instance_id);
+        switch (tc.outcome) {
+        case NwdafTokenCheck::Ok:
+            break;
+        case NwdafTokenCheck::Missing:
+            return {401, "", "", {{"WWW-Authenticate", "Bearer realm=\"" + realm + "\""}}};
+        case NwdafTokenCheck::Invalid: {
+            spdlog::info("OAuth2: rejected token for {} ({})", service, tc.reason);
+            SbiResponse r{401, "", "", {{"WWW-Authenticate",
+                "Bearer realm=\"" + realm + "\", error=\"invalid_token\""}}};
+            if (!tc.missing_claims.empty()) {
+                json ip = json::array();
+                for (const auto& c : tc.missing_claims) ip.push_back({{"param", c}, {"reason", "missing claim"}});
+                r.content_type = "application/problem+json";
+                r.body = json{{"title", "Unauthorized"}, {"status", 401},
+                              {"cause", "ACCESS_TOKEN_CLAIM_MISSING"}, {"invalidParams", ip}}.dump();
+            }
+            return r;
+        }
+        case NwdafTokenCheck::InsufficientScope:
+            return {403, "", "", {{"WWW-Authenticate", "Bearer realm=\"" + realm +
+                "\", error=\"insufficient_scope\", scope=\"" + service + "\""}}};
+        }
+        if (tc.claims.contains("analyticsIdList")) {
+            authorized = req;
+            authorized.authorized_analytics = tc.claims["analyticsIdList"].get<std::set<std::string>>();
+        }
     }
+    const SbiRequest& effective = authorized.authorized_analytics ? authorized : req;
+#else
+    const SbiRequest& effective = req;
+#endif
     if (!rate_limiter_.allow(remote_addr))
         // TS 29.500 Table 5.2.7.2-1: excessive request rate.
         return {429, "application/problem+json",
@@ -239,7 +287,7 @@ SbiResponse NwdafServer::serve3gpp(const SbiRequest& req, const std::string& rem
                      {"cause", "NF_CONGESTION_RISK"},
                      {"detail", "request rate limit exceeded"}}.dump(),
                 {{"Retry-After", "1"}}};
-    return sbi_.dispatch(req);
+    return sbi_.dispatch(effective);
 }
 
 void NwdafServer::handle3gpp(const httplib::Request& req, httplib::Response& res) {
@@ -256,6 +304,15 @@ void NwdafServer::handle3gpp(const httplib::Request& req, httplib::Response& res
     const std::string host = req.has_header("Host") ? req.get_header_value("Host")
         : config_.sbi_bind_address + ":" + std::to_string(config_.sbi_port);
     sreq.api_root = std::string(config_.tls_enabled ? "https" : "http") + "://" + host;
+#ifdef NWDAF_USE_TLS
+    // H1.10: the consumer's NF Instance ID from its TLS client certificate.
+    if (req.ssl) {
+        if (X509* cert = SSL_get1_peer_certificate(req.ssl)) {
+            sreq.client_nf_instance_id = nwdafNfInstanceIdFromCert(cert);
+            X509_free(cert);
+        }
+    }
+#endif
 
     SbiResponse out = serve3gpp(sreq, req.remote_addr);
     res.status = out.status;

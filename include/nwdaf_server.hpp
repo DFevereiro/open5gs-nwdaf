@@ -4,6 +4,10 @@
 #include "nwdaf_config.hpp"
 #include "nwdaf_ratelimit.hpp"
 #include "nwdaf_sbi.hpp"
+#ifdef NWDAF_USE_TLS
+#include "nwdaf_oauth.hpp"
+#include <openssl/ssl.h>
+#endif
 #ifdef NWDAF_USE_HTTP2
 #include "nwdaf_h2_server.hpp"
 #endif
@@ -77,6 +81,10 @@ private:
 
     // H1.7: 3GPP Nnwdaf_AnalyticsInfo / Nnwdaf_EventsSubscription (TS 29.520)
     NwdafSbiService         sbi_;
+#ifdef NWDAF_USE_TLS
+    NwdafSchemaValidator    oauth_schema_;                       // H1.10: AccessTokenClaims
+    std::unique_ptr<NwdafAccessTokenValidator> token_validator_;  // null = OAuth off
+#endif
 #ifdef NWDAF_USE_HTTP2
     std::unique_ptr<NwdafH2Server> h2_;   // H1.8: 3GPP interfaces over HTTP/2
 #endif

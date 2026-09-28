@@ -129,6 +129,10 @@ NwdafConfig NwdafConfig::load(const std::string& yaml_path) {
 
     // P1-4: OAuth 2.0
     cfg.oauth_enabled = n["oauth_enabled"] ? n["oauth_enabled"].as<bool>()        : false;
+    cfg.oauth_nrf_public_key_file = n["oauth_nrf_public_key_file"]
+        ? n["oauth_nrf_public_key_file"].as<std::string>() : "";
+    cfg.oauth_shared_secret_file = n["oauth_shared_secret_file"]
+        ? n["oauth_shared_secret_file"].as<std::string>() : "";
 
     // H1.6: path to the OpenAPI document served from the SBI.
     cfg.openapi_spec_path = n["openapi_spec_path"]

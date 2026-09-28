@@ -144,3 +144,122 @@ TEST_CASE("H1.8: h2 over TLS refuses a client without a certificate") {
     REQUIRE_FALSE(h2Get(false));
 }
 #endif
+
+#if defined(NWDAF_USE_TLS)
+#include "jwt_test_util.hpp"
+#include "nwdaf_http_client.hpp"
+
+// H1.10: OAuth 2.0 on the 3GPP interfaces, end to end (TS 29.500 §6.7.3).
+static const int OAUTH_PORT = 17787, OAUTH_H2_PORT = 17788;
+static const std::string OAUTH_NWDAF_ID = "198e9234-b849-42a2-9f70-d9a587616c2b";
+
+struct OAuthServer {
+    jwt_test::Key          key{"RSA"};
+    NwdafConfig            cfg;
+    MockNwdafCollector     collector;
+    NwdafAnalyticsEngine   engine;
+    NwdafSubscriptionStore subs;
+    NwdafServer            server;
+    std::thread            thread;
+
+    static NwdafConfig config(const jwt_test::Key& k) {
+        NwdafConfig c = tlsConfig("", 0);
+        c.tls_enabled = false;                      // tokens over plain h2c / HTTP/1.1
+        c.nf_instance_id = OAUTH_NWDAF_ID;
+        c.sbi_port = OAUTH_PORT;
+        c.sbi_h2_port = OAUTH_H2_PORT;
+        c.oauth_enabled = true;
+        c.oauth_nrf_public_key_file = "/tmp/nwdaf_oauth_srv_pub.pem";
+        k.writePublicPem(c.oauth_nrf_public_key_file);
+        return c;
+    }
+    OAuthServer() : cfg(config(key)), collector(cfg), engine(collector, cfg), server(engine, subs, cfg) {
+        thread = std::thread([this]{ server.start(); });
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
+    ~OAuthServer() { server.stop(); if (thread.joinable()) thread.join(); }
+
+    NwdafHttpResponse get(const std::string& path, const std::string& bearer = "") {
+        const int port = NwdafHttpClient::http2() ? OAUTH_H2_PORT : OAUTH_PORT;
+        std::vector<std::pair<std::string, std::string>> h;
+        if (!bearer.empty()) h.emplace_back("Authorization", "Bearer " + bearer);
+        return NwdafHttpClient(NwdafConfig()).request("GET", "http://127.0.0.1:" + std::to_string(port) + path,
+                                                      "", "", h);
+    }
+    std::string realm() const {
+        return "http://127.0.0.1:" +
+               std::to_string(NwdafHttpClient::http2() ? OAUTH_H2_PORT : OAUTH_PORT) +
+               "/nnwdaf-analyticsinfo/v1";
+    }
+};
+
+static const std::string NF_LOAD_Q = "/nnwdaf-analyticsinfo/v1/analytics?event-id=NF_LOAD";
+
+TEST_CASE("H1.10: a request without an access token is 401 with a Bearer challenge") {
+    OAuthServer srv;
+    auto res = srv.get(NF_LOAD_Q);
+    REQUIRE(res.status == 401);
+    // TS 29.500 §6.7.3: realm = the API URI; no error attribute without a token.
+    REQUIRE(res.header("www-authenticate") == "Bearer realm=\"" + srv.realm() + "\"");
+}
+
+TEST_CASE("H1.10: an invalid token is 401 invalid_token; missing claims add a ProblemDetails") {
+    OAuthServer srv;
+    json c = jwt_test::claimsFor(OAUTH_NWDAF_ID);
+    c["exp"] = jwt_test::inSeconds(-5);
+    auto res = srv.get(NF_LOAD_Q, jwt_test::token("RS256", c, &srv.key));
+    REQUIRE(res.status == 401);
+    REQUIRE(res.header("www-authenticate") ==
+            "Bearer realm=\"" + srv.realm() + "\", error=\"invalid_token\"");
+
+    c = jwt_test::claimsFor(OAUTH_NWDAF_ID);
+    c.erase("sub");
+    res = srv.get(NF_LOAD_Q, jwt_test::token("RS256", c, &srv.key));
+    REQUIRE(res.status == 401);
+    const json body = json::parse(res.body);
+    REQUIRE(body["cause"] == "ACCESS_TOKEN_CLAIM_MISSING");
+    REQUIRE(body["invalidParams"][0]["param"] == "sub");
+}
+
+TEST_CASE("H1.10: a token without the service's scope is 403 insufficient_scope") {
+    OAuthServer srv;
+    auto res = srv.get(NF_LOAD_Q, jwt_test::token("RS256",
+        jwt_test::claimsFor(OAUTH_NWDAF_ID, "nnwdaf-eventssubscription"), &srv.key));
+    REQUIRE(res.status == 403);
+    REQUIRE(res.header("www-authenticate") == "Bearer realm=\"" + srv.realm() +
+            "\", error=\"insufficient_scope\", scope=\"nnwdaf-analyticsinfo\"");
+}
+
+TEST_CASE("H1.10: a valid token reaches the service") {
+    OAuthServer srv;
+    auto res = srv.get(NF_LOAD_Q, jwt_test::token("RS256", jwt_test::claimsFor(OAUTH_NWDAF_ID), &srv.key));
+    REQUIRE(res.status == 400);   // served: NF_LOAD is not advertised by this instance
+    REQUIRE(json::parse(res.body)["cause"] == "MANDATORY_QUERY_PARAM_INCORRECT");
+}
+
+TEST_CASE("H1.10: analyticsIdList limits the analytics a token grants (I-6)") {
+    OAuthServer srv;
+    json c = jwt_test::claimsFor(OAUTH_NWDAF_ID);
+    c["analyticsIdList"] = json::array({"SERVICE_EXPERIENCE"});
+    auto res = srv.get(NF_LOAD_Q, jwt_test::token("RS256", c, &srv.key));
+    REQUIRE(res.status == 403);
+    REQUIRE(res.header("www-authenticate").find("insufficient_scope") != std::string::npos);
+}
+
+TEST_CASE("H1.10: the operator health probe stays open") {
+    OAuthServer srv;
+    httplib::Client op("127.0.0.1", OAUTH_PORT);
+    auto res = op.Get(HEALTH);
+    REQUIRE(res);
+    REQUIRE(res->status == 200);
+}
+
+TEST_CASE("H1.10: OAuth enabled without a key source stops startup") {
+    NwdafConfig cfg = tlsConfig("", 0);
+    cfg.oauth_enabled = true;
+    MockNwdafCollector collector(cfg);
+    NwdafAnalyticsEngine engine(collector, cfg);
+    NwdafSubscriptionStore subs;
+    REQUIRE_THROWS(NwdafServer(engine, subs, cfg));
+}
+#endif

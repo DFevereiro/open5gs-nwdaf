@@ -27,6 +27,7 @@ add_executable(nwdaf_tests
     test_analytics_catalogue.cpp # H1.7 known/operator/implemented/advertised IDs
     test_schema_validator.cpp    # H1.7 OpenAPI validator against the official artifacts
     test_supported_features.cpp  # H1.7 TS 29.571 SupportedFeatures + negotiation
+    test_oauth.cpp               # H1.10 access-token validation (TLS builds)
 )
 target_include_directories(nwdaf_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
