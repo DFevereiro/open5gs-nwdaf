@@ -24,6 +24,7 @@ add_executable(nwdaf_tests
     test_analytics.cpp
     test_arch_improvements.cpp   # TIER-4 ARCH-01…ARCH-05 tests
     test_h1_analytics.cpp        # H1.4 catalogue + H1.5 E-model MOS
+    test_analytics_catalogue.cpp # H1.7 known/operator/implemented/advertised IDs
 )
 target_include_directories(nwdaf_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -40,6 +41,7 @@ target_link_libraries(nwdaf_tests PRIVATE
 add_executable(nwdaf_integration_tests
     test_server_integration.cpp
     test_openapi_conformance.cpp   # H1.6 OpenAPI contract test
+    test_sbi_security.cpp          # H1.10 mTLS (compiled to no tests without NWDAF_USE_TLS)
 )
 target_include_directories(nwdaf_integration_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -54,6 +56,7 @@ target_link_libraries(nwdaf_integration_tests PRIVATE
 # tree, so the spec and the code are checked against each other in CI.
 target_compile_definitions(nwdaf_integration_tests PRIVATE
     NWDAF_OPENAPI_SPEC="${CMAKE_SOURCE_DIR}/docs/openapi/nwdaf-analytics-v1.yaml"
+    NWDAF_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
 )
 
 include(CTest)

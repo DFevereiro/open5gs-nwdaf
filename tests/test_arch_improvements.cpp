@@ -336,7 +336,8 @@ TEST_CASE("ARCH-05: NwdafConfig TLS fields default to disabled with sensible pat
     REQUIRE(cfg.tls_enabled   == false);
     REQUIRE(!cfg.tls_cert_file.empty());
     REQUIRE(!cfg.tls_key_file.empty());
-    REQUIRE(!cfg.tls_ca_file.empty());
+    // H1.10: mTLS is opt-in — no client CA unless one is configured.
+    REQUIRE(cfg.tls_ca_file.empty());
 }
 
 TEST_CASE("ARCH-05: NwdafConfig TLS fields can be set programmatically") {

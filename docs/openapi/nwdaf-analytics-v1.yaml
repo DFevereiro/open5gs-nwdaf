@@ -23,14 +23,17 @@ info:
 
       * `GET /nwdaf-analytics/v1/analytics` — query-parameter form, convenient
         for operators, dashboards and `curl`.
-      * `POST /nnwdaf-analyticsinfo/v1/analytics` — the TS 29.520-aligned form
-        used by NF consumers, carrying DNN and S-NSSAI filters.
+      * `POST /nnwdaf-analyticsinfo/v1/analytics`: a JSON-body form carrying
+        DNN and S-NSSAI filters. **Non-standard:** TS 29.520 defines
+        Nnwdaf_AnalyticsInfo as a `GET` with query parameters. Moving to the
+        standard Rel-18 resources is tracked in docs/3gpp-rel18-compliance.md
+        (roadmap H1.7).
 
     Both return the same envelope, with the analytics-specific payload under
     `analData`.
   license:
-    name: AGPL-3.0-or-later
-    url: https://www.gnu.org/licenses/agpl-3.0.en.html
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
 
 servers:
   - url: http://{host}:{port}
@@ -130,9 +133,10 @@ paths:
   /nnwdaf-analyticsinfo/v1/analytics:
     post:
       tags: [AnalyticsInfo]
-      summary: Retrieve analytics (TS 29.520 form)
+      summary: Retrieve analytics (JSON-body form, non-standard)
       description: |
-        The NF-consumer-facing operation. Accepts DNN and S-NSSAI filters,
+        Not a TS 29.520 operation: Nnwdaf_AnalyticsInfo is specified as a GET
+        with query parameters (roadmap H1.7). Accepts DNN and S-NSSAI filters,
         which are validated against this NWDAF's served slice and DNN — a
         mismatch is a 400 rather than a silently ignored filter.
       operationId: postAnalyticsInfo
@@ -251,11 +255,11 @@ x-analyticsDataSchemas:
   UE_MOBILITY:            '#/components/schemas/UeMobilityData'
   UE_COMMUNICATION:       '#/components/schemas/UeCommunicationData'
   ABNORMAL_BEHAVIOUR:     '#/components/schemas/AbnormalBehaviourData'
-  QoS_SUSTAINABILITY:     '#/components/schemas/QosSustainabilityData'
+  QOS_SUSTAINABILITY:     '#/components/schemas/QosSustainabilityData'
   SERVICE_EXPERIENCE:     '#/components/schemas/ServiceExperienceData'
   NETWORK_PERFORMANCE:    '#/components/schemas/NetworkPerformanceData'
   SM_CONGESTION:          '#/components/schemas/SmCongestionData'
-  REDUNDANT_TRANSMISSION: '#/components/schemas/RedundantTransmissionData'
+  RED_TRANS_EXP:          '#/components/schemas/RedundantTransmissionData'
   DISPERSION:             '#/components/schemas/DispersionData'
 
 components:
@@ -287,19 +291,21 @@ components:
     AnalyticsId:
       type: string
       description: |
-        The analytics catalogue this NWDAF serves. `QOS_SUSTAINABILITY` is
-        accepted on input and normalised to the canonical mixed-case
-        `QoS_SUSTAINABILITY`.
+        The analytics catalogue the operator API serves, spelled as in the
+        Rel-18 `NwdafEvent` enum (TS 29.520). On input this API also accepts
+        two legacy pre-Rel-18 spellings, `QoS_SUSTAINABILITY` and
+        `REDUNDANT_TRANSMISSION`. It normalises them to `QOS_SUSTAINABILITY`
+        and `RED_TRANS_EXP`, and responses always use the Rel-18 spelling.
       enum:
         - NF_LOAD
         - UE_MOBILITY
         - UE_COMMUNICATION
         - ABNORMAL_BEHAVIOUR
-        - QoS_SUSTAINABILITY
+        - QOS_SUSTAINABILITY
         - SERVICE_EXPERIENCE
         - NETWORK_PERFORMANCE
         - SM_CONGESTION
-        - REDUNDANT_TRANSMISSION
+        - RED_TRANS_EXP
         - DISPERSION
 
     ProblemDetails:
@@ -536,7 +542,7 @@ components:
       required: [analyticsId, ts, currentDlKbps, currentUlKbps, predictedDlKbps,
                  predictedUlKbps, dlTrend, ulTrend, violationRisk, sustainability, confidence]
       properties:
-        analyticsId:     { type: string, enum: [QoS_SUSTAINABILITY] }
+        analyticsId:     { type: string, enum: [QOS_SUSTAINABILITY] }
         ts:              { type: string }
         currentDlKbps:   { type: number, minimum: 0 }
         currentUlKbps:   { type: number, minimum: 0 }
@@ -644,7 +650,7 @@ components:
                  reliabilityLevel, urllcSuitable, avgDlKbps, avgUlKbps,
                  dataPoints, confidence]
       properties:
-        analyticsId: { type: string, enum: [REDUNDANT_TRANSMISSION] }
+        analyticsId: { type: string, enum: [RED_TRANS_EXP] }
         ts:          { type: string }
         snssai:      { $ref: '#/components/schemas/Snssai' }
         redTransExp:
@@ -679,7 +685,7 @@ components:
       description: Fewer than two samples in the window — nothing to rate.
       required: [analyticsId, ts, reason, dataPoints, confidence]
       properties:
-        analyticsId: { type: string, enum: [REDUNDANT_TRANSMISSION] }
+        analyticsId: { type: string, enum: [RED_TRANS_EXP] }
         ts:          { type: string }
         reason:      { type: string, enum: [INSUFFICIENT_DATA] }
         dataPoints:  { type: integer, minimum: 0 }

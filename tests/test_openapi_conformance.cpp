@@ -13,6 +13,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include "nwdaf_server.hpp"
 #include "nwdaf_analytics.hpp"
+#include "nwdaf_analytics_catalogue.hpp"
 #include "nwdaf_subscription.hpp"
 #include "mock_open5gs.hpp"
 #include <httplib.h>
@@ -399,7 +400,7 @@ TEST_CASE("H1.6: the OpenAPI document is well-formed and complete") {
         enum_ids.push_back(e.as<std::string>());
 
     const YAML::Node mapping = root["x-analyticsDataSchemas"];
-    for (const auto& id : NwdafAnalyticsEngine::VALID_ANALYTICS_IDS) {
+    for (const auto& id : NwdafAnalyticsCatalogue::OPERATOR_IDS) {
         INFO("analyticsId=" << id);
         REQUIRE(std::find(enum_ids.begin(), enum_ids.end(), id) != enum_ids.end());
         REQUIRE(mapping[id]);
@@ -408,7 +409,7 @@ TEST_CASE("H1.6: the OpenAPI document is well-formed and complete") {
     }
     // No stale entries either: the enum must not advertise IDs the engine
     // does not serve.
-    REQUIRE(enum_ids.size() == NwdafAnalyticsEngine::VALID_ANALYTICS_IDS.size());
+    REQUIRE(enum_ids.size() == NwdafAnalyticsCatalogue::OPERATOR_IDS.size());
 }
 
 // ── Analytics responses ──────────────────────────────────────────────────────
@@ -422,7 +423,7 @@ TEST_CASE("H1.6: GET /analytics conforms for every analytics ID") {
     YAML::Node envelope = f.spec.schemaByRef("#/components/schemas/AnalyticsResponse");
     YAML::Node mapping  = f.spec.root()["x-analyticsDataSchemas"];
 
-    for (const auto& id : NwdafAnalyticsEngine::VALID_ANALYTICS_IDS) {
+    for (const auto& id : NwdafAnalyticsCatalogue::OPERATOR_IDS) {
         INFO("analyticsId=" << id);
         auto res = cli.Get("/nwdaf-analytics/v1/analytics?analyticsId=" + id);
         REQUIRE(res);
@@ -447,7 +448,7 @@ TEST_CASE("H1.6: POST /nnwdaf-analyticsinfo conforms for every analytics ID") {
     YAML::Node envelope = f.spec.schemaByRef("#/components/schemas/AnalyticsResponse");
     YAML::Node mapping  = f.spec.root()["x-analyticsDataSchemas"];
 
-    for (const auto& id : NwdafAnalyticsEngine::VALID_ANALYTICS_IDS) {
+    for (const auto& id : NwdafAnalyticsCatalogue::OPERATOR_IDS) {
         INFO("analyticsId=" << id);
         json req = {{"analyticsId", id},
                     {"dnn", "internet"},
@@ -483,9 +484,9 @@ TEST_CASE("H1.6: /health conforms and advertises the live catalogue") {
     // The advertised list must be exactly what the engine serves.
     auto ids = body["nfProfile"]["nwdafInfo"]["analyticsIds"]
                    .get<std::vector<std::string>>();
-    REQUIRE(ids.size() == NwdafAnalyticsEngine::VALID_ANALYTICS_IDS.size());
+    REQUIRE(ids.size() == NwdafAnalyticsCatalogue::OPERATOR_IDS.size());
     for (const auto& id : ids)
-        REQUIRE(NwdafAnalyticsEngine::VALID_ANALYTICS_IDS.count(id) == 1);
+        REQUIRE(NwdafAnalyticsCatalogue::OPERATOR_IDS.count(id) == 1);
 }
 
 TEST_CASE("H1.6: /ready conforms in both states") {
@@ -570,7 +571,7 @@ TEST_CASE("H1.6: the SBI serves the published OpenAPI document") {
     REQUIRE(served["components"]["schemas"].size()
             == f.spec.root()["components"]["schemas"].size());
     REQUIRE(served["x-analyticsDataSchemas"].size()
-            == NwdafAnalyticsEngine::VALID_ANALYTICS_IDS.size());
+            == NwdafAnalyticsCatalogue::OPERATOR_IDS.size());
 }
 
 TEST_CASE("H1.6: a missing OpenAPI document degrades to 404, not a crash") {
@@ -629,17 +630,24 @@ TEST_CASE("H1.6: error responses are RFC 7807 problem documents") {
     }
 }
 
-TEST_CASE("H1.6: the uppercase QOS_SUSTAINABILITY alias is accepted") {
+TEST_CASE("H1.6: legacy analyticsId spellings are accepted on the operator API") {
     auto& f = fixture();
     httplib::Client cli("127.0.0.1", CONF_PORT);
     cli.set_connection_timeout(5);
-    auto res = cli.Get("/nwdaf-analytics/v1/analytics?analyticsId=QOS_SUSTAINABILITY");
-    REQUIRE(res);
-    REQUIRE(res->status == 200);
-    json body = json::parse(res->body);
-    // Normalised to the canonical spelling the spec's enum declares.
-    REQUIRE(body["analyticsId"] == "QoS_SUSTAINABILITY");
-    requireValid(f.spec, body,
-                 f.spec.schemaByRef("#/components/schemas/AnalyticsResponse"),
-                 "QOS_SUSTAINABILITY alias");
+    const std::vector<std::pair<std::string, std::string>> aliases = {
+        {"QoS_SUSTAINABILITY",     "QOS_SUSTAINABILITY"},
+        {"REDUNDANT_TRANSMISSION", "RED_TRANS_EXP"},
+    };
+    for (const auto& [legacy, canonical] : aliases) {
+        INFO("legacy=" << legacy);
+        auto res = cli.Get("/nwdaf-analytics/v1/analytics?analyticsId=" + legacy);
+        REQUIRE(res);
+        REQUIRE(res->status == 200);
+        json body = json::parse(res->body);
+        // Normalised to the Rel-18 spelling the spec's enum declares.
+        REQUIRE(body["analyticsId"] == canonical);
+        requireValid(f.spec, body,
+                     f.spec.schemaByRef("#/components/schemas/AnalyticsResponse"),
+                     legacy + " alias");
+    }
 }

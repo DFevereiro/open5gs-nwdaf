@@ -76,7 +76,7 @@ nwdaf:
   tls_enabled: false
   tls_cert_file: "/etc/open5gs/tls/nwdaf.pem"
   tls_key_file:  "/etc/open5gs/tls/nwdaf.key"
-  tls_ca_file:   "/etc/open5gs/tls/ca.pem"   # optional — enables mTLS client verification
+  tls_ca_file:   "/etc/open5gs/tls/ca.pem"   # optional — when set, mTLS: clients must present a cert signed by this CA
 
   # H1.6: OpenAPI document served from GET /nwdaf-analytics/v1/openapi.
   # Installed here by `make install`; if the file is missing the endpoint

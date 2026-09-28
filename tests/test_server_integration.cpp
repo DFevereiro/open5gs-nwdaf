@@ -164,7 +164,7 @@ TEST_CASE("Integration: All 7 analytics IDs return 200 with correct analyticsId"
 
     std::vector<std::string> ids = {
         "NF_LOAD", "UE_MOBILITY", "UE_COMMUNICATION",
-        "ABNORMAL_BEHAVIOUR", "QoS_SUSTAINABILITY",
+        "ABNORMAL_BEHAVIOUR", "QOS_SUSTAINABILITY",
         "SERVICE_EXPERIENCE", "NETWORK_PERFORMANCE"
     };
     for (const auto& id : ids) {
@@ -184,25 +184,47 @@ TEST_CASE("Integration: POST /train returns 200") {
     REQUIRE(res->status == 200);
 }
 
-// ── COMP-05: QOS_SUSTAINABILITY case normalization ────────────────────────────
+// ── COMP-05 / H1.4: Rel-18 spelling canonical, legacy spellings still accepted ─
 
-TEST_CASE("Integration: COMP-05 QOS_SUSTAINABILITY (uppercase) normalized to 200") {
+TEST_CASE("Integration: COMP-05 QOS_SUSTAINABILITY is canonical; QoS_SUSTAINABILITY still accepted") {
     (void)getFixture();
     httplib::Client cli("127.0.0.1", TEST_PORT);
-    // Canonical casing
-    auto res1 = cli.Get("/nwdaf-analytics/v1/analytics?analyticsId=QoS_SUSTAINABILITY");
+    // Rel-18 NwdafEvent spelling
+    auto res1 = cli.Get("/nwdaf-analytics/v1/analytics?analyticsId=QOS_SUSTAINABILITY");
     REQUIRE(res1);
     REQUIRE(res1->status == 200);
     json b1 = json::parse(res1->body);
-    REQUIRE(b1["analyticsId"] == "QoS_SUSTAINABILITY");
+    REQUIRE(b1["analyticsId"] == "QOS_SUSTAINABILITY");
 
-    // Uppercase variant — must be normalized, not rejected with 422
-    auto res2 = cli.Get("/nwdaf-analytics/v1/analytics?analyticsId=QOS_SUSTAINABILITY");
+    // Pre-Rel-18 mixed-case spelling — must keep working, not be rejected with 422
+    auto res2 = cli.Get("/nwdaf-analytics/v1/analytics?analyticsId=QoS_SUSTAINABILITY");
     REQUIRE(res2);
     REQUIRE(res2->status == 200);
     json b2 = json::parse(res2->body);
-    // Server normalizes to canonical form in the response
-    REQUIRE(b2["analyticsId"] == "QoS_SUSTAINABILITY");
+    // Server normalizes to the Rel-18 form in the response
+    REQUIRE(b2["analyticsId"] == "QOS_SUSTAINABILITY");
+}
+
+TEST_CASE("Integration: H1.4 REDUNDANT_TRANSMISSION still accepted, answered as RED_TRANS_EXP") {
+    (void)getFixture();
+    httplib::Client cli("127.0.0.1", TEST_PORT);
+    for (const std::string id : {"RED_TRANS_EXP", "REDUNDANT_TRANSMISSION"}) {
+        INFO("analyticsId=" << id);
+        auto res = cli.Get("/nwdaf-analytics/v1/analytics?analyticsId=" + id);
+        REQUIRE(res);
+        REQUIRE(res->status == 200);
+        REQUIRE(json::parse(res->body)["analyticsId"] == "RED_TRANS_EXP");
+    }
+}
+
+TEST_CASE("Integration: H1.4 legacy ID in a POST analytics body is normalised") {
+    (void)getFixture();
+    httplib::Client cli("127.0.0.1", TEST_PORT);
+    auto res = cli.Post("/nnwdaf-analyticsinfo/v1/analytics",
+                        R"({"analyticsId":"QoS_SUSTAINABILITY"})", "application/json");
+    REQUIRE(res);
+    REQUIRE(res->status == 200);
+    REQUIRE(json::parse(res->body)["analyticsId"] == "QOS_SUSTAINABILITY");
 }
 
 // ── COMP-03: NF_LOAD rejects supi parameter ──────────────────────────────────
@@ -231,13 +253,13 @@ TEST_CASE("Integration: COMP-03 UE_COMMUNICATION with supi includes supi in resp
     REQUIRE(body["analData"]["supi"] == "imsi-999700000000001");
 }
 
-// ── COMP-03: QoS_SUSTAINABILITY with supi returns supiFiltered flag ───────────
+// ── COMP-03: QOS_SUSTAINABILITY with supi returns supiFiltered flag ───────────
 
-TEST_CASE("Integration: COMP-03 QoS_SUSTAINABILITY with supi returns supiFiltered=false") {
+TEST_CASE("Integration: COMP-03 QOS_SUSTAINABILITY with supi returns supiFiltered=false") {
     (void)getFixture();
     httplib::Client cli("127.0.0.1", TEST_PORT);
     auto res = cli.Get("/nwdaf-analytics/v1/analytics"
-                       "?analyticsId=QoS_SUSTAINABILITY&supi=imsi-999700000000001");
+                       "?analyticsId=QOS_SUSTAINABILITY&supi=imsi-999700000000001");
     REQUIRE(res);
     REQUIRE(res->status == 200);
     json body = json::parse(res->body);

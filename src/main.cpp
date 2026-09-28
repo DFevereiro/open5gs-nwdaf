@@ -93,14 +93,23 @@ static void setupLogging(const NwdafConfig& cfg) {
     spdlog::set_default_logger(logger);
 }
 
-static std::unique_ptr<httplib::Client> createHttpClient(const std::string& uri) {
+static std::unique_ptr<httplib::Client> createHttpClient(const NwdafConfig& cfg,
+                                                        const std::string& uri) {
 #ifdef NWDAF_USE_TLS
     if (uri.find("https://") == 0) {
-        auto cli = std::make_unique<httplib::Client>(uri);
-        cli->enable_server_certificate_verification(false);
+        // H1.10: verify the NRF's certificate (TS 33.501 §13.1) — against the
+        // configured CA when there is one, else the system trust store — and
+        // present this NF's certificate so an mTLS-enforcing NRF accepts us.
+        auto cli = cfg.tls_enabled
+            ? std::make_unique<httplib::Client>(uri, cfg.tls_cert_file, cfg.tls_key_file)
+            : std::make_unique<httplib::Client>(uri);
+        cli->enable_server_certificate_verification(true);
+        if (!cfg.tls_ca_file.empty()) cli->set_ca_cert_path(cfg.tls_ca_file.c_str());
         cli->set_connection_timeout(3, 0);
         return cli;
     }
+#else
+    (void)cfg;
 #endif
     auto cli = std::make_unique<httplib::Client>(uri);
     cli->set_connection_timeout(3, 0);
@@ -126,7 +135,7 @@ static bool registerWithNrf(const NwdafConfig& cfg) {
         }}}
     };
     
-    auto cli = createHttpClient(cfg.nrf_uri);
+    auto cli = createHttpClient(cfg, cfg.nrf_uri);
     std::string path = "/nnrf-nfm/v1/nf-instances/" + cfg.nf_instance_id;
     
     auto res = cli->Put(path.c_str(), body.dump(), "application/json");
@@ -209,7 +218,7 @@ int main(int argc, char* argv[]) {
         nrf_hb_thread = std::thread([&config]() {
             int elapsed = 0;
             int miss_count = 0;
-            auto cli = createHttpClient(config.nrf_uri);
+            auto cli = createHttpClient(config, config.nrf_uri);
             std::string path = "/nnrf-nfm/v1/nf-instances/" + config.nf_instance_id;
             
             while (!g_shutdown) {

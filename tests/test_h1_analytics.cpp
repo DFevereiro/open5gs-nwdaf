@@ -3,6 +3,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
 #include "nwdaf_analytics.hpp"
+#include "nwdaf_analytics_catalogue.hpp"
 #include "ml/mos_estimator.hpp"
 #include "mock_open5gs.hpp"
 #include <cmath>
@@ -360,26 +361,26 @@ TEST_CASE("H1.4: an establishment reject is not counted as a success") {
     REQUIRE(col.getActivePduSessionCount() == 0);
 }
 
-// ── H1.4: REDUNDANT_TRANSMISSION ─────────────────────────────────────────────
+// ── H1.4: RED_TRANS_EXP ─────────────────────────────────────────────
 
-TEST_CASE("H1.4: REDUNDANT_TRANSMISSION needs a window before reporting") {
+TEST_CASE("H1.4: RED_TRANS_EXP needs a window before reporting") {
     auto cfg = h1Config();
     MockNwdafCollector col(cfg);
     NwdafAnalyticsEngine engine(col, cfg);
-    json r = engine.compute("REDUNDANT_TRANSMISSION");
+    json r = engine.compute("RED_TRANS_EXP");
     REQUIRE(r["reason"] == "INSUFFICIENT_DATA");
     REQUIRE(r["confidence"].get<int>() == 0);
 }
 
-TEST_CASE("H1.4: REDUNDANT_TRANSMISSION rates a steady link URLLC-suitable") {
+TEST_CASE("H1.4: RED_TRANS_EXP rates a steady link URLLC-suitable") {
     auto cfg = h1Config();
     MockNwdafCollector col(cfg);
     seedThroughput(col, std::vector<std::pair<double,double>>(30, {1000.0, 500.0}));
 
     NwdafAnalyticsEngine engine(col, cfg);
-    json r = engine.compute("REDUNDANT_TRANSMISSION");
+    json r = engine.compute("RED_TRANS_EXP");
 
-    REQUIRE(r["analyticsId"] == "REDUNDANT_TRANSMISSION");
+    REQUIRE(r["analyticsId"] == "RED_TRANS_EXP");
     REQUIRE(r["redTransExp"]["avgDlRedTransExp"].get<double>() == Approx(100.0));
     REQUIRE(r["redTransExp"]["varDlRedTransExp"].get<double>() == Approx(0.0));
     REQUIRE(r["reliabilityLevel"] == "HIGH");
@@ -387,7 +388,7 @@ TEST_CASE("H1.4: REDUNDANT_TRANSMISSION rates a steady link URLLC-suitable") {
     REQUIRE(r["redTransExpPerTS"].size() == 6);
 }
 
-TEST_CASE("H1.4: REDUNDANT_TRANSMISSION rejects a volatile link") {
+TEST_CASE("H1.4: RED_TRANS_EXP rejects a volatile link") {
     auto cfg = h1Config();
     MockNwdafCollector col(cfg);
     std::vector<std::pair<double,double>> jittery;
@@ -396,7 +397,7 @@ TEST_CASE("H1.4: REDUNDANT_TRANSMISSION rejects a volatile link") {
     seedThroughput(col, jittery);
 
     NwdafAnalyticsEngine engine(col, cfg);
-    json r = engine.compute("REDUNDANT_TRANSMISSION");
+    json r = engine.compute("RED_TRANS_EXP");
 
     REQUIRE(r["redTransExp"]["avgDlRedTransExp"].get<double>() < 30.0);
     REQUIRE(r["reliabilityLevel"] == "LOW");
@@ -406,9 +407,9 @@ TEST_CASE("H1.4: REDUNDANT_TRANSMISSION rejects a volatile link") {
 // ── Catalogue registration ───────────────────────────────────────────────────
 
 TEST_CASE("H1.4: the three new IDs are registered and dispatchable") {
-    const auto& ids = NwdafAnalyticsEngine::VALID_ANALYTICS_IDS;
+    const auto& ids = NwdafAnalyticsCatalogue::OPERATOR_IDS;
     REQUIRE(ids.count("SM_CONGESTION") == 1);
-    REQUIRE(ids.count("REDUNDANT_TRANSMISSION") == 1);
+    REQUIRE(ids.count("RED_TRANS_EXP") == 1);
     REQUIRE(ids.count("DISPERSION") == 1);
     REQUIRE(ids.size() == 10);
 

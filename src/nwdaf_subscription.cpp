@@ -1,4 +1,5 @@
 #include "nwdaf_subscription.hpp"
+#include "nwdaf_analytics_catalogue.hpp"
 #include <spdlog/spdlog.h>
 #include <stdexcept>
 #include <random>
@@ -37,8 +38,19 @@ NwdafSubscriptionStore::NwdafSubscriptionStore(
     : backend_(std::move(backend))
 {
     if (backend_) {
-        for (auto& sub : backend_->loadAll())
+        for (auto& sub : backend_->loadAll()) {
+            // H1.4: rows persisted before the Rel-18 ID spellings carry legacy
+            // IDs the engine no longer dispatches; migrate them on load.
+            std::string canonical =
+                NwdafAnalyticsCatalogue::canonicalOperatorId(sub.analytics_id);
+            if (canonical != sub.analytics_id) {
+                spdlog::info("Migrating subscription {} analyticsId {} → {}",
+                             sub.sub_id, sub.analytics_id, canonical);
+                sub.analytics_id = canonical;
+                backend_->persist(sub);
+            }
             store_[sub.sub_id] = sub;
+        }
         spdlog::info("Loaded {} subscriptions from persistent backend", store_.size());
     }
 }
@@ -46,7 +58,8 @@ NwdafSubscriptionStore::NwdafSubscriptionStore(
 std::string NwdafSubscriptionStore::create(const json& body) {
     Subscription sub;
     sub.sub_id        = generateSubId();
-    sub.analytics_id  = body.value("analyticsId", "");
+    sub.analytics_id  = NwdafAnalyticsCatalogue::canonicalOperatorId(
+                            body.value("analyticsId", ""));
     sub.notif_uri     = body.value("notifUri", "");
     sub.notif_id      = body.value("notifId", "");
     sub.rep_period_seconds = body.value("repPeriod", 60);

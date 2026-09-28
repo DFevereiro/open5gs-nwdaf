@@ -24,7 +24,7 @@ const ANALYTICS_IDS = [
   { id: 'UE_MOBILITY',         name: 'UE Mobility',         icon: Smartphone,  ref: 'TS 23.288 §6.7',  cat: 'UE'        },
   { id: 'UE_COMMUNICATION',    name: 'UE Communication',    icon: Radio,       ref: 'TS 23.288 §6.6',  cat: 'UE'        },
   { id: 'ABNORMAL_BEHAVIOUR',  name: 'Anomaly Detection',   icon: ShieldAlert, ref: 'TS 23.288 §6.4',  cat: 'Security'  },
-  { id: 'QoS_SUSTAINABILITY',  name: 'QoS Sustainability',  icon: Activity,    ref: 'TS 23.288 §6.9',  cat: 'Quality'   },
+  { id: 'QOS_SUSTAINABILITY',  name: 'QoS Sustainability',  icon: Activity,    ref: 'TS 23.288 §6.9',  cat: 'Quality'   },
   { id: 'SERVICE_EXPERIENCE',  name: 'Service Experience',  icon: Zap,         ref: 'TS 23.288 §6.8',  cat: 'Quality'   },
   { id: 'NETWORK_PERFORMANCE', name: 'Network Performance', icon: Wifi,        ref: 'TS 23.288 §6.6a', cat: 'Network'   },
 ];
@@ -1075,7 +1075,7 @@ const AnalyticsPage = ({ analyticsId }) => {
         );
       }
 
-      case 'QoS_SUSTAINABILITY': {
+      case 'QOS_SUSTAINABILITY': {
         const dl = ad.avgDlKbps || 0, ul = ad.avgUlKbps || 0, conf = ad.confidence || 0;
         const items = [
           { label:'Downlink Avg', value:`${dl.toFixed(2)} kbps`, color:'var(--accent)' },

@@ -8,14 +8,6 @@
 #include <filesystem>
 #include <unistd.h>
 
-const std::set<std::string> NwdafAnalyticsEngine::VALID_ANALYTICS_IDS = {
-    "NF_LOAD", "UE_MOBILITY", "UE_COMMUNICATION",
-    "ABNORMAL_BEHAVIOUR", "QoS_SUSTAINABILITY",
-    "SERVICE_EXPERIENCE", "NETWORK_PERFORMANCE",
-    // H1.4 — Rel-17/18 catalogue completion
-    "SM_CONGESTION", "REDUNDANT_TRANSMISSION", "DISPERSION"
-};
-
 NwdafAnalyticsEngine::NwdafAnalyticsEngine(NwdafCollector& collector,
                                            const NwdafConfig& config)
     : collector_(collector),
@@ -273,12 +265,12 @@ json NwdafAnalyticsEngine::compute(const std::string& analytics_id,
     if (analytics_id == "UE_MOBILITY")         return ueMobility(supi, start_ts, end_ts);
     if (analytics_id == "UE_COMMUNICATION")    return ueCommunication(supi, start_ts, end_ts);
     if (analytics_id == "ABNORMAL_BEHAVIOUR")  return abnormalBehaviour(supi, start_ts, end_ts);
-    if (analytics_id == "QoS_SUSTAINABILITY")  return qosSustainability(supi, start_ts, end_ts);
+    if (analytics_id == "QOS_SUSTAINABILITY")  return qosSustainability(supi, start_ts, end_ts);
     if (analytics_id == "SERVICE_EXPERIENCE")  return serviceExperience(supi, start_ts, end_ts);
     if (analytics_id == "NETWORK_PERFORMANCE") return networkPerformance(supi, start_ts, end_ts);
     // H1.4
     if (analytics_id == "SM_CONGESTION")          return smCongestion(supi, start_ts, end_ts);
-    if (analytics_id == "REDUNDANT_TRANSMISSION") return redundantTransmission(supi, start_ts, end_ts);
+    if (analytics_id == "RED_TRANS_EXP")          return redundantTransmission(supi, start_ts, end_ts);
     if (analytics_id == "DISPERSION")             return dispersion(supi, start_ts, end_ts);
     throw std::invalid_argument("Unknown analyticsId: " + analytics_id);
 }
@@ -558,7 +550,7 @@ json NwdafAnalyticsEngine::abnormalBehaviour(const std::string& supi,
     };
 }
 
-// ── QoS_SUSTAINABILITY ────────────────────────────────────────────────────────
+// ── QOS_SUSTAINABILITY ────────────────────────────────────────────────────────
 
 json NwdafAnalyticsEngine::qosSustainability(const std::string& supi,
                                               const std::string& start_ts,
@@ -589,7 +581,7 @@ json NwdafAnalyticsEngine::qosSustainability(const std::string& supi,
     std::string sustainability = pred_dl > 5.0 ? "SUSTAINABLE" : "UNSUSTAINABLE";
 
     json result = {
-        {"analyticsId",   "QoS_SUSTAINABILITY"},
+        {"analyticsId",   "QOS_SUSTAINABILITY"},
         {"ts",            nowISO()},
         {"currentDlKbps", cur_dl},
         {"currentUlKbps", cur_ul},
@@ -864,7 +856,7 @@ json NwdafAnalyticsEngine::smCongestion(const std::string& supi,
     return result;
 }
 
-// ── REDUNDANT_TRANSMISSION (TS 23.288 §6.12 — RED_TRANS_EXP) ─────────────────
+// ── RED_TRANS_EXP (redundant transmission experience; TS 23.288 clause: verify)
 
 json NwdafAnalyticsEngine::redundantTransmission(const std::string& supi,
                                                   const std::string& start_ts,
@@ -874,7 +866,7 @@ json NwdafAnalyticsEngine::redundantTransmission(const std::string& supi,
 
     if (n < 2) {
         json r = {
-            {"analyticsId", "REDUNDANT_TRANSMISSION"},
+            {"analyticsId", "RED_TRANS_EXP"},
             {"ts",          nowISO()},
             {"reason",      "INSUFFICIENT_DATA"},
             {"dataPoints",  n},
@@ -938,7 +930,7 @@ json NwdafAnalyticsEngine::redundantTransmission(const std::string& supi,
     bool urllc_suitable = worst >= 95.0;
 
     json result = {
-        {"analyticsId", "REDUNDANT_TRANSMISSION"},
+        {"analyticsId", "RED_TRANS_EXP"},
         {"ts",          nowISO()},
         {"snssai",      {{"sst", config_.served_snssai_sst},
                          {"sd",  config_.served_snssai_sd}}},

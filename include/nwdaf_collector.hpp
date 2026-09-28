@@ -102,7 +102,7 @@ protected:
 
     // H1.4 test seam: append a throughput sample directly to the history ring,
     // as bgLoop would. Analytics that need a multi-sample window (DISPERSION,
-    // REDUNDANT_TRANSMISSION) are otherwise only reachable by running the
+    // RED_TRANS_EXP) are otherwise only reachable by running the
     // background loop for real time. Protected so no production API changes;
     // MockNwdafCollector re-exposes it for tests.
     void appendThroughputSample(const ThroughputSample& s);

@@ -105,7 +105,7 @@ NwdafConfig NwdafConfig::load(const std::string& yaml_path) {
     cfg.tls_enabled   = n["tls_enabled"]   ? n["tls_enabled"].as<bool>()          : false;
     cfg.tls_cert_file = n["tls_cert_file"] ? n["tls_cert_file"].as<std::string>() : "/etc/open5gs/tls/nwdaf.pem";
     cfg.tls_key_file  = n["tls_key_file"]  ? n["tls_key_file"].as<std::string>()  : "/etc/open5gs/tls/nwdaf.key";
-    cfg.tls_ca_file   = n["tls_ca_file"]   ? n["tls_ca_file"].as<std::string>()   : "/etc/open5gs/tls/ca.pem";
+    cfg.tls_ca_file   = n["tls_ca_file"]   ? n["tls_ca_file"].as<std::string>()   : "";
 
     // P1-4: OAuth 2.0
     cfg.oauth_enabled = n["oauth_enabled"] ? n["oauth_enabled"].as<bool>()        : false;

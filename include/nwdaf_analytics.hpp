@@ -48,8 +48,6 @@ public:
     std::pair<double,double>   getCurrentThroughput() const;   // {dl_kbps, ul_kbps}
     std::vector<NfMetric>      getCurrentNfMetrics()  const;
 
-    static const std::set<std::string> VALID_ANALYTICS_IDS;
-
     // ARCH-01: data-quality-driven confidence computation (public for testability)
     // Returns 0 if data_points < min_points; otherwise scales linearly with
     // coverage (data_points / max_points), reduced by baseline_quality, capped at 95.

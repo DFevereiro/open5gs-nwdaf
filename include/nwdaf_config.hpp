@@ -59,7 +59,9 @@ public:
     bool        tls_enabled   = false;
     std::string tls_cert_file = "/etc/open5gs/tls/nwdaf.pem";
     std::string tls_key_file  = "/etc/open5gs/tls/nwdaf.key";
-    std::string tls_ca_file   = "/etc/open5gs/tls/ca.pem";
+    // H1.10: client-certificate CA. Non-empty enables mutual TLS (TS 33.501
+    // §13.1): clients without a certificate signed by this CA are refused.
+    std::string tls_ca_file;
 
     // P1-4: OAuth 2.0 access-token auth
     bool oauth_enabled = false;

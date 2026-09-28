@@ -136,7 +136,7 @@ TEST_CASE("ABNORMAL_BEHAVIOUR detects injected spike") {
     REQUIRE(result.contains("dataPoints"));
 }
 
-TEST_CASE("QoS_SUSTAINABILITY EWMA converges after 20 samples") {
+TEST_CASE("QOS_SUSTAINABILITY EWMA converges after 20 samples") {
     auto cfg = makeTestConfig();
     MockNwdafCollector col(cfg);
     col.setNetStats("ogstun", 0, 0);
@@ -145,8 +145,8 @@ TEST_CASE("QoS_SUSTAINABILITY EWMA converges after 20 samples") {
     col.stopBackgroundCollection();
 
     NwdafAnalyticsEngine engine(col, cfg);
-    json result = engine.compute("QoS_SUSTAINABILITY");
-    REQUIRE(result["analyticsId"] == "QoS_SUSTAINABILITY");
+    json result = engine.compute("QOS_SUSTAINABILITY");
+    REQUIRE(result["analyticsId"] == "QOS_SUSTAINABILITY");
     REQUIRE(result.contains("predictedDlKbps"));
     REQUIRE(result.contains("dlTrend"));
     REQUIRE(result.contains("violationRisk"));
@@ -164,7 +164,7 @@ TEST_CASE("NETWORK_PERFORMANCE score with 6/7 NFs active") {
     REQUIRE(score <= 100.0);
 }
 
-TEST_CASE("QoS_SUSTAINABILITY: EWMA prediction is idempotent across multiple calls") {
+TEST_CASE("QOS_SUSTAINABILITY: EWMA prediction is idempotent across multiple calls") {
     auto cfg = makeTestConfig();
     MockNwdafCollector col(cfg);
     col.setNetStats("ogstun", 0, 0);
@@ -180,9 +180,9 @@ TEST_CASE("QoS_SUSTAINABILITY: EWMA prediction is idempotent across multiple cal
     // With BUG-02 fixed, qosSustainability() only reads the EWMA — never writes.
     // Calling it repeatedly with the same frozen collector state must yield
     // identical predictions every time.
-    json r1 = engine.compute("QoS_SUSTAINABILITY");
-    json r2 = engine.compute("QoS_SUSTAINABILITY");
-    json r3 = engine.compute("QoS_SUSTAINABILITY");
+    json r1 = engine.compute("QOS_SUSTAINABILITY");
+    json r2 = engine.compute("QOS_SUSTAINABILITY");
+    json r3 = engine.compute("QOS_SUSTAINABILITY");
 
     REQUIRE(r1["predictedDlKbps"] == r2["predictedDlKbps"]);
     REQUIRE(r2["predictedDlKbps"] == r3["predictedDlKbps"]);
@@ -261,13 +261,13 @@ TEST_CASE("COMP-03: UE_COMMUNICATION filters SMF events by SUPI") {
     REQUIRE((int)none["pduSessionEstCount"] == 0);
 }
 
-TEST_CASE("COMP-03: QoS_SUSTAINABILITY with SUPI returns supiFiltered=false flag") {
+TEST_CASE("COMP-03: QOS_SUSTAINABILITY with SUPI returns supiFiltered=false flag") {
     auto cfg = makeTestConfig();
     MockNwdafCollector col(cfg);
     NwdafAnalyticsEngine engine(col, cfg);
 
-    json r = engine.compute("QoS_SUSTAINABILITY", "imsi-999700000000001");
-    REQUIRE(r["analyticsId"] == "QoS_SUSTAINABILITY");
+    json r = engine.compute("QOS_SUSTAINABILITY", "imsi-999700000000001");
+    REQUIRE(r["analyticsId"] == "QOS_SUSTAINABILITY");
     REQUIRE(r.contains("supiFiltered"));
     REQUIRE(r["supiFiltered"] == false);
     REQUIRE(r.contains("note"));
@@ -382,8 +382,9 @@ TEST_CASE("COMP-04: UE_MOBILITY respects start_ts / end_ts") {
     REQUIRE(r2["analyticsId"] == "UE_MOBILITY");
 }
 
-// ── COMP-05: QOS_SUSTAINABILITY case normalization (server-side) ──────────────
-// Tested via the integration test below (see test_server_integration.cpp additions)
+// ── COMP-05 / H1.4: legacy ID spellings are an operator-API concern ───────────
+// Normalisation is tested in test_analytics_catalogue.cpp and, end to end, in
+// test_server_integration.cpp. The engine dispatches Rel-18 spellings only.
 
 // ── COMP-01: NwdafNotifier subscription store ─────────────────────────────────
 

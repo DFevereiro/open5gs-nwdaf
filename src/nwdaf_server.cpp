@@ -1,4 +1,5 @@
 #include "nwdaf_server.hpp"
+#include "nwdaf_analytics_catalogue.hpp"
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
 #include <random>
@@ -19,14 +20,24 @@ NwdafServer::NwdafServer(NwdafAnalyticsEngine& engine,
     // otherwise fall back to plain HTTP.
 #ifdef NWDAF_USE_TLS
     if (config.tls_enabled) {
+        // H1.10: a configured client CA turns on mutual TLS (TS 33.501 §13.1).
+        // httplib does not report a CA that failed to load, so check it here
+        // rather than start a server that silently rejects every client.
+        const bool mtls = !config.tls_ca_file.empty();
+        if (mtls && !std::ifstream(config.tls_ca_file)) {
+            spdlog::error("tls_ca_file {} is not readable", config.tls_ca_file);
+            throw std::runtime_error("Invalid TLS client CA path");
+        }
         auto ssl_svr = std::make_unique<httplib::SSLServer>(
-            config.tls_cert_file.c_str(), config.tls_key_file.c_str());
+            config.tls_cert_file.c_str(), config.tls_key_file.c_str(),
+            mtls ? config.tls_ca_file.c_str() : nullptr);
         if (!ssl_svr->is_valid()) {
             spdlog::error("Failed to load TLS cert={} or key={}", config.tls_cert_file, config.tls_key_file);
             throw std::runtime_error("Invalid TLS certificate or key path");
         }
         svr_ = std::move(ssl_svr);
-        spdlog::info("TLS enabled: cert={} key={}", config.tls_cert_file, config.tls_key_file);
+        spdlog::info("TLS enabled: cert={} key={} mTLS={}", config.tls_cert_file,
+                     config.tls_key_file, mtls ? config.tls_ca_file : "off");
     } else {
         svr_ = std::make_unique<httplib::Server>();
     }
@@ -208,6 +219,18 @@ static std::string resolveReqId(const httplib::Request& req) {
            : generateShortId();
 }
 
+// H1.7: operator-API analytics-ID resolution, shared by the GET and POST
+// handlers. Legacy spellings are rewritten to their Rel-18 ID in place;
+// returns false when the result is not served by the operator API.
+static bool resolveOperatorId(std::string& analytics_id) {
+    std::string canonical = NwdafAnalyticsCatalogue::canonicalOperatorId(analytics_id);
+    if (canonical != analytics_id) {
+        spdlog::debug("Normalizing {} → {}", analytics_id, canonical);
+        analytics_id = canonical;
+    }
+    return NwdafAnalyticsCatalogue::OPERATOR_IDS.count(analytics_id) > 0;
+}
+
 // ── Handlers ─────────────────────────────────────────────────────────────────
 
 void NwdafServer::handleHealth(const httplib::Request& req, httplib::Response& res) {
@@ -224,7 +247,7 @@ void NwdafServer::handleHealth(const httplib::Request& req, httplib::Response& r
                 // H1.4: advertise the live catalogue rather than a duplicated
                 // literal list, so a new analytics ID is exposed to NF consumers
                 // (and the NRF profile) the moment it is registered.
-                {"analyticsIds", NwdafAnalyticsEngine::VALID_ANALYTICS_IDS}
+                {"analyticsIds", NwdafAnalyticsCatalogue::OPERATOR_IDS}
             }}
         }}
     };
@@ -272,15 +295,7 @@ void NwdafServer::handleGetAnalytics(const httplib::Request& req, httplib::Respo
 
     std::string analytics_id = req.get_param_value("analyticsId");
 
-    // COMP-05: normalize the uppercase-only variant to the canonical mixed-case form
-    if (analytics_id == "QOS_SUSTAINABILITY") {
-        spdlog::debug("Normalizing QOS_SUSTAINABILITY → QoS_SUSTAINABILITY");
-        analytics_id = "QoS_SUSTAINABILITY";
-    }
-
-    if (NwdafAnalyticsEngine::VALID_ANALYTICS_IDS.find(analytics_id) ==
-        NwdafAnalyticsEngine::VALID_ANALYTICS_IDS.end())
-    {
+    if (!resolveOperatorId(analytics_id)) {
         res.set_content(errorResponse(422, "Unprocessable Entity",
                                       "Unknown analyticsId: " + analytics_id).dump(),
                         "application/problem+json");
@@ -365,11 +380,7 @@ void NwdafServer::handlePostAnalytics(const httplib::Request& req, httplib::Resp
         }
         
         analytics_id = body["analyticsId"].get<std::string>();
-        if (analytics_id == "QOS_SUSTAINABILITY") {
-            analytics_id = "QoS_SUSTAINABILITY";
-        }
-        
-        if (NwdafAnalyticsEngine::VALID_ANALYTICS_IDS.find(analytics_id) == NwdafAnalyticsEngine::VALID_ANALYTICS_IDS.end()) {
+        if (!resolveOperatorId(analytics_id)) {
             res.set_content(errorResponse(422, "Unprocessable Entity", "Unknown analyticsId: " + analytics_id).dump(), "application/problem+json");
             res.status = 422;
             logAndFinish(analytics_id, "");

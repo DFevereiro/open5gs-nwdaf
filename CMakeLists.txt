@@ -101,6 +101,7 @@ endif()
 # ── NWDAF library ─────────────────────────────────────────────────────────────
 set(NWDAF_LIB_SOURCES
     src/nwdaf_config.cpp
+    src/nwdaf_analytics_catalogue.cpp
     src/nwdaf_collector.cpp
     src/nwdaf_analytics.cpp
     src/nwdaf_server.cpp
