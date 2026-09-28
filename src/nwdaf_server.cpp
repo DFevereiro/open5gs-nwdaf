@@ -13,9 +13,10 @@
 
 NwdafServer::NwdafServer(NwdafAnalyticsEngine& engine,
                          NwdafSubscriptionStore& subs,
-                         const NwdafConfig& config)
+                         const NwdafConfig& config,
+                         std::shared_ptr<NwdafNfIdResolver> resolver)
     : engine_(engine), subs_(subs), config_(config),
-      sbi_(engine, subs, config),
+      sbi_(engine, subs, config, std::move(resolver)),
       rate_limiter_(config.rate_limit_per_ip_rps, config.rate_limit_global_rps)
 {
     // ARCH-05: instantiate SSLServer when TLS is enabled and compiled in,

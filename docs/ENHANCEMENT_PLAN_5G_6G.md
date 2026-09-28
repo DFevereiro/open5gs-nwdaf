@@ -43,7 +43,7 @@ Last updated **2026-08-23** (release `v1.1.0`).
 | H1.6 — OpenAPI 3.0 + conformance in CI | [#28](https://github.com/cem8kaya/open5gs-nwdaf/issues/28) | **Done** for the operator API · *extended for Rel-18: official-schema conformance (§3a)* |
 | H1.7 — 3GPP Nnwdaf SBI conformance (Rel-18) | — | **In progress**: 3GPP resources, official-schema validation, supported features and failure semantics done; NF_LOAD mapped, with subscriptions and notifications; other IDs next |
 | H1.8 — HTTP/2 SBI transport + compliance profile | — | **Done**: nghttp2 server and libcurl client, the rel18-sbi and dev-legacy profiles, CI over HTTP/2; validated against the Open5GS v2.8.0 NRF |
-| H1.9 — Truthful Rel-18 NRF profile, lifecycle, discovery | — | **In progress**: profile, NFRegister, heartbeat with `404` re-registration and NFDeregister done, and validated against Open5GS; NF discovery next |
+| H1.9 — Truthful Rel-18 NRF profile, lifecycle, discovery | — | **Done**: truthful profile, NFRegister, heartbeat with `404` re-registration, NFDeregister and NF discovery, all validated against the Open5GS v2.8.0 NRF |
 | H1.10 — SBI security: mTLS, OAuth2 token validation, NRF client TLS | — | Not started |
 | **M1 — Rel-18 supported-scope compliance gate** | — | **Open**. Criteria are in [`3gpp-rel18-compliance.md`](3gpp-rel18-compliance.md#m1--rel-18-supported-scope-compliance-gate) |
 | H2.x — MLOps platform | [#29](https://github.com/cem8kaya/open5gs-nwdaf/issues/29)–[#35](https://github.com/cem8kaya/open5gs-nwdaf/issues/35) | Not started |

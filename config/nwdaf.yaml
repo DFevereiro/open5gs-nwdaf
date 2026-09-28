@@ -30,6 +30,10 @@ nwdaf:
   #   AMF: "<amf nfInstanceId>"
   #   SMF: "<smf nfInstanceId>"
   #   UPF: "<upf nfInstanceId>"
+  # Or discover them from the NRF (types without a configured ID; used only
+  # when exactly one instance of the type is registered):
+  nrf_nf_discovery: false
+  nrf_nf_discovery_interval_seconds: 60
 
   # Data collection — UPF tunnel interfaces for throughput measurement
   # gtp5g bypasses user-space capture; read /sys/class/net directly

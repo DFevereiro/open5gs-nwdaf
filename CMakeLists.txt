@@ -132,6 +132,7 @@ set(NWDAF_LIB_SOURCES
     src/nwdaf_3gpp_adapter.cpp
     src/nwdaf_http_client.cpp
     src/nwdaf_nrf_client.cpp
+    src/nwdaf_nf_id_resolver.cpp
     src/nwdaf_collector.cpp
     src/nwdaf_analytics.cpp
     src/nwdaf_server.cpp

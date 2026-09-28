@@ -4,6 +4,7 @@
 #include "nwdaf_server.hpp"
 #include "nwdaf_subscription.hpp"
 #include "nwdaf_nrf_client.hpp"
+#include "nwdaf_nf_id_resolver.hpp"
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
@@ -122,7 +123,9 @@ int main(int argc, char* argv[]) {
     }
 #endif
     NwdafSubscriptionStore subs(sub_backend);
-    NwdafServer           server(engine, subs, config);
+    // H1.9: NF instance IDs for NF_LOAD — configured, else NRF discovery.
+    auto nf_ids = std::make_shared<NwdafNfIdResolver>(config);
+    NwdafServer           server(engine, subs, config, nf_ids);
 
     g_server_ptr    = &server;
     g_collector_ptr = &collector;
@@ -138,11 +141,26 @@ int main(int argc, char* argv[]) {
     NwdafNrfClient nrf(config);
     if (config.nrf_register_on_startup) nrf.registerNf();
 
+    // H1.9: keep the discovered NF instance IDs current (Nnrf_NFDiscovery).
+    std::thread nf_discovery_thread;
+    if (config.nrf_nf_discovery) {
+        nf_discovery_thread = std::thread([&config, nf_ids]() {
+            int elapsed = config.nrf_nf_discovery_interval_seconds;   // refresh at once
+            while (!g_shutdown) {
+                if (++elapsed >= config.nrf_nf_discovery_interval_seconds) {
+                    elapsed = 0;
+                    nf_ids->refresh();
+                }
+                std::this_thread::sleep_for(std::chrono::seconds(1));
+            }
+        });
+    }
+
     // COMP-01: subscription push delivery notifier
     // PROD-03: pass server's atomic counters so /metrics can expose them
 #ifdef NWDAF_ENABLE_PUSH_DELIVERY
     NwdafNotifier notifier(subs, engine, 5,
-                           &server.notif_total_, &server.notif_failures_, config);
+                           &server.notif_total_, &server.notif_failures_, config, nf_ids);
     notifier.start();
 #endif
 
@@ -184,6 +202,7 @@ int main(int argc, char* argv[]) {
 #endif
 
     if (nrf_hb_thread.joinable()) nrf_hb_thread.join();
+    if (nf_discovery_thread.joinable()) nf_discovery_thread.join();
     if (config.nrf_register_on_startup) nrf.deregister();
 
 #ifdef NWDAF_USE_SD_JOURNAL

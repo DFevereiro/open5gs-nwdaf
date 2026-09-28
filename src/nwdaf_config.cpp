@@ -51,6 +51,10 @@ NwdafConfig NwdafConfig::load(const std::string& yaml_path) {
                                  {"NRF","nrfd"},{"UDR","udrd"},{"BSF","bsfd"},{"NSSF","nssfd"}};
     }
 
+    cfg.nrf_nf_discovery = n["nrf_nf_discovery"] ? n["nrf_nf_discovery"].as<bool>() : false;
+    cfg.nrf_nf_discovery_interval_seconds = n["nrf_nf_discovery_interval_seconds"]
+        ? n["nrf_nf_discovery_interval_seconds"].as<int>() : 60;
+
     // H1.7: NF instance IDs of the monitored NFs (Open5GS deployment mechanism
     // until NRF discovery, H1.9). Keys must be monitored NF types.
     if (n["nf_instance_ids"]) {

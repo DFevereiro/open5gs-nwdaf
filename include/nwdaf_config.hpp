@@ -26,6 +26,10 @@ public:
     // deployment mechanism until NRF discovery (H1.9) supplies the IDs; NF_LOAD
     // is advertised on the 3GPP interfaces only when this map is configured.
     std::map<std::string, std::string> nf_instance_ids;
+    // H1.9: resolve the IDs not configured above through NRF NF discovery
+    // (TS 29.510 Nnrf_NFDiscovery), refreshed every interval.
+    bool nrf_nf_discovery = false;
+    int  nrf_nf_discovery_interval_seconds = 60;
     std::vector<std::string> throughput_interfaces;
     int    throughput_history_size      = 360;
     int    collection_interval_seconds  = 10;

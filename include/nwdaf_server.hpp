@@ -26,7 +26,8 @@ class NwdafServer {
 public:
     NwdafServer(NwdafAnalyticsEngine& engine,
                 NwdafSubscriptionStore& subs,
-                const NwdafConfig& config);
+                const NwdafConfig& config,
+                std::shared_ptr<NwdafNfIdResolver> resolver = nullptr);   // H1.9
 
     void start();
     void stop();

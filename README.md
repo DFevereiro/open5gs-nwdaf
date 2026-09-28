@@ -293,7 +293,8 @@ Everything deployment-specific lives in [`config/nwdaf.yaml`](config/nwdaf.yaml)
 | `sbi_bind_address` / `sbi_port` | `127.0.0.1` / `7779` | Operator API and dashboard, over HTTP/1.1. Must not collide with Open5GS's 7777. |
 | `sbi_h2_port` | `7780` | The 3GPP interfaces over HTTP/2 (TS 29.500 §5.2). This is the endpoint registered with the NRF. `0` disables it. |
 | `nf_service_names` | `AMF→amfd`, … | Open5GS systemd unit suffix map |
-| `nf_instance_ids` | — | NF type → the NF's real `nfInstanceId`. Required for Rel-18 NF_LOAD on the 3GPP interfaces, which is advertised only when this is set. |
+| `nf_instance_ids` | — | NF type → the NF's real `nfInstanceId`, for Rel-18 NF_LOAD on the 3GPP interfaces. Takes precedence over discovery. |
+| `nrf_nf_discovery` / `nrf_nf_discovery_interval_seconds` | `false` / `60` | Resolve the remaining NF instance IDs from the NRF (Nnrf_NFDiscovery). A type is used only when exactly one instance is registered. NF_LOAD is advertised when this is on or `nf_instance_ids` is set. |
 | `throughput_interfaces` | `ogstun` | UPF tunnel interfaces to sample |
 | `collection_interval_seconds` | `10` | Collector cadence |
 | `supi_regex` | `imsi-(\d{15})` | SUPI extraction pattern (Open5GS v2.7.6) |

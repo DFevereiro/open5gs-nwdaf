@@ -5,12 +5,12 @@
 using json = nlohmann::json;
 
 json Nwdaf3gppAdapter::nfLoadLevelInfos(const std::vector<NfMetric>& metrics,
-                                        const NwdafConfig& cfg,
+                                        const std::map<std::string, std::string>& nf_instance_ids,
                                         const NfLoadQuery& query) {
     json out = json::array();
     for (const auto& m : metrics) {
-        const auto id = cfg.nf_instance_ids.find(m.nf_type);
-        if (id == cfg.nf_instance_ids.end()) continue;
+        const auto id = nf_instance_ids.find(m.nf_type);
+        if (id == nf_instance_ids.end()) continue;
         // The collector measures load only for a running NF with a PID.
         if (m.status != "active" || m.pid <= 0) continue;
         if (!query.nf_types.empty() && !query.nf_types.count(m.nf_type)) continue;

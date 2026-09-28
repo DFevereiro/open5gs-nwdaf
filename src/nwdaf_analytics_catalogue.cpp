@@ -34,8 +34,9 @@ std::set<std::string> NwdafAnalyticsCatalogue::rel18Advertised(const NwdafConfig
     std::set<std::string> out;
     for (const auto& id : REL18_IMPLEMENTED) {
         // NfLoadLevelInformation requires nfInstanceId: without a configured
-        // instance-ID source the NWDAF cannot produce NF_LOAD truthfully.
-        if (id == "NF_LOAD" && cfg.nf_instance_ids.empty()) continue;
+        // instance-ID source (the map, or NRF discovery) the NWDAF cannot
+        // produce NF_LOAD truthfully.
+        if (id == "NF_LOAD" && cfg.nf_instance_ids.empty() && !cfg.nrf_nf_discovery) continue;
         out.insert(id);
     }
     return out;

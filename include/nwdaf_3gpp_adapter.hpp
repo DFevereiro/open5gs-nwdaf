@@ -3,6 +3,7 @@
 #include "nwdaf_config.hpp"
 #include <nlohmann/json.hpp>
 #include <cstddef>
+#include <map>
 #include <optional>
 #include <set>
 #include <string>
@@ -27,6 +28,6 @@ public:
     // nfStatus is deliberately not reported: it describes NRF registration
     // status, which the collectors do not observe.
     static nlohmann::json nfLoadLevelInfos(const std::vector<NfMetric>& metrics,
-                                           const NwdafConfig& cfg,
+                                           const std::map<std::string, std::string>& nf_instance_ids,
                                            const NfLoadQuery& query);
 };

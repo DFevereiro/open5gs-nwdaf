@@ -2,6 +2,9 @@
 // The registered NFProfile is validated against the official schema.
 #include <catch2/catch_test_macros.hpp>
 #include "nwdaf_nrf_client.hpp"
+#include "nwdaf_nf_id_resolver.hpp"
+#include "nwdaf_analytics_catalogue.hpp"
+#include <map>
 #include "nwdaf_schema_validator.hpp"
 #include "nwdaf_sbi.hpp"
 #include <httplib.h>
@@ -26,10 +29,21 @@ struct MockNrf {
     std::mutex m;
     std::vector<NrfRequest> requests;
     int patch_status = 204;
+    int discovery_status = 200;
+    std::map<std::string, std::vector<std::string>> instances;   // NF type → registered IDs
 
-    SbiResponse handle(const std::string& method, const std::string& path, const std::string& body) {
+    SbiResponse handle(const std::string& method, const std::string& path, const std::string& body,
+                       const std::string& target_type = "", const std::string& requester = "") {
         std::lock_guard<std::mutex> lk(m);
-        requests.push_back({method, path, body});
+        requests.push_back({method, path + (target_type.empty() ? "" : "?" + target_type + "," + requester), body});
+        if (method == "GET" && path == "/nnrf-disc/v1/nf-instances") {
+            if (discovery_status != 200) return {discovery_status, "", "", {}};
+            json result = {{"nfInstances", json::array()}};
+            for (const auto& id : instances[target_type])
+                result["nfInstances"].push_back({{"nfInstanceId", id}, {"nfType", target_type},
+                                                 {"nfStatus", "REGISTERED"}});
+            return {200, "application/json", result.dump(), {}};
+        }
         if (method == "PUT")    return {201, "application/json", R"({"heartBeatTimer":7})", {}};
         if (method == "PATCH")  return {patch_status, "", "", {}};
         if (method == "DELETE") return {204, "", "", {}};
@@ -41,7 +55,11 @@ struct MockNrf {
     }
 #ifdef NWDAF_USE_HTTP2
     NwdafH2Server server{[] { NwdafH2Server::Options o; o.port = NRF_PORT; return o; }(),
-        [this](const SbiRequest& r, const std::string&) { return handle(r.method, r.path, r.body); }};
+        [this](const SbiRequest& r, const std::string&) {
+            auto q = [&](const char* k) { auto it = r.query.find(k);
+                                          return it == r.query.end() ? std::string() : it->second; };
+            return handle(r.method, r.path, r.body, q("target-nf-type"), q("requester-nf-type"));
+        }};
     MockNrf() { server.start(); }
     ~MockNrf() { server.stop(); }
 #else
@@ -49,10 +67,13 @@ struct MockNrf {
     std::thread thread;
     MockNrf() {
         auto h = [this](const httplib::Request& req, httplib::Response& res) {
-            SbiResponse r = handle(req.method, req.path, req.body);
+            SbiResponse r = handle(req.method, req.path, req.body,
+                                   req.get_param_value("target-nf-type"),
+                                   req.get_param_value("requester-nf-type"));
             res.status = r.status;
             if (!r.body.empty()) res.set_content(r.body, r.content_type);
         };
+        server.Get(".*", h);
         server.Put(".*", h);
         server.Patch(".*", h);
         server.Delete(".*", h);
@@ -166,4 +187,78 @@ TEST_CASE("H1.9: NFDeregister DELETEs the instance") {
     auto seen = nrf.seen();
     REQUIRE(seen.back().method == "DELETE");
     REQUIRE(seen.back().path == std::string("/nnrf-nfm/v1/nf-instances/") + NF_ID);
+}
+
+// ── H1.9: NF instance IDs from NRF discovery ────────────────────────────────
+
+static const char* AMF_ID  = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+static const char* SMF1_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+static const char* SMF2_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+static const char* UPF_ID  = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+
+static NwdafConfig discoveryConfig() {
+    NwdafConfig cfg = nrfConfig();
+    cfg.nf_service_names = {{"AMF", "amfd"}, {"SMF", "smfd"}, {"UPF", "upfd"}};
+    cfg.nrf_nf_discovery = true;
+    return cfg;
+}
+
+TEST_CASE("H1.9: discovery resolves an NF type only when exactly one instance is registered") {
+    MockNrf nrf;
+    nrf.instances = {{"AMF", {AMF_ID}}, {"SMF", {SMF1_ID, SMF2_ID}}};
+    NwdafNfIdResolver resolver(discoveryConfig());
+    resolver.refresh();
+    const auto ids = resolver.ids();
+    REQUIRE(ids.at("AMF") == AMF_ID);
+    REQUIRE(ids.count("SMF") == 0);   // two SMFs: which one is measured here is unknown
+    REQUIRE(ids.count("UPF") == 0);   // none registered
+
+    // The query names both mandatory parameters (TS 29.510 NFDiscovery).
+    bool asked = false;
+    for (const auto& r : nrf.seen())
+        asked = asked || (r.method == "GET" && r.path == "/nnrf-disc/v1/nf-instances?AMF,NWDAF");
+    REQUIRE(asked);
+}
+
+TEST_CASE("H1.9: configured NF instance IDs win and are not looked up") {
+    MockNrf nrf;
+    nrf.instances = {{"AMF", {AMF_ID}}, {"UPF", {"eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"}}};
+    NwdafConfig cfg = discoveryConfig();
+    cfg.nf_instance_ids = {{"UPF", UPF_ID}};
+    NwdafNfIdResolver resolver(cfg);
+    resolver.refresh();
+    REQUIRE(resolver.ids().at("UPF") == UPF_ID);
+    for (const auto& r : nrf.seen()) REQUIRE(r.path.find("?UPF,") == std::string::npos);
+}
+
+TEST_CASE("H1.9: a failed discovery keeps the last known ID; a deregistered NF is dropped") {
+    MockNrf nrf;
+    nrf.instances = {{"AMF", {AMF_ID}}};
+    NwdafNfIdResolver resolver(discoveryConfig());
+    resolver.refresh();
+    nrf.discovery_status = 503;
+    resolver.refresh();
+    REQUIRE(resolver.ids().at("AMF") == AMF_ID);
+
+    nrf.discovery_status = 200;
+    nrf.instances.clear();
+    resolver.refresh();
+    REQUIRE(resolver.ids().count("AMF") == 0);
+}
+
+TEST_CASE("H1.9: without nrf_nf_discovery the NRF is never queried") {
+    MockNrf nrf;
+    NwdafConfig cfg = discoveryConfig();
+    cfg.nrf_nf_discovery = false;
+    NwdafNfIdResolver resolver(cfg);
+    resolver.refresh();
+    REQUIRE(nrf.seen().empty());
+    REQUIRE(resolver.ids().empty());
+}
+
+TEST_CASE("H1.9: enabling discovery is a configured capability that advertises NF_LOAD") {
+    NwdafConfig cfg = nrfConfig();
+    REQUIRE(NwdafAnalyticsCatalogue::rel18Advertised(cfg).count("NF_LOAD") == 0);
+    cfg.nrf_nf_discovery = true;
+    REQUIRE(NwdafAnalyticsCatalogue::rel18Advertised(cfg).count("NF_LOAD") == 1);
 }
