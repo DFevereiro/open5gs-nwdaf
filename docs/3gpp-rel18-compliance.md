@@ -7,10 +7,28 @@ artifacts at commit `d05657604fa1` of the official 3GPP API repository. Item
 prose is cited from the ETSI publication of the same version. Rules taken from the
 prose are pinned in [Appendix A](#appendix-a--pinned-prose-facts-ts-29520-v18140).
 
-**Current claim: none.** This NWDAF does **not** yet claim Release 18 compliance.
-The target claim is **"Release 18 compliant for the supported scope"**, which may
-be made only when milestone **M1** passes. The M1 criteria are listed
-[at the end of this document](#m1--rel-18-supported-scope-compliance-gate).
+**Current claim: "Release 18 compliant for the supported scope"**, since milestone
+**M1** passed on 2026-09-28 (criteria [at the end of this document](#m1--rel-18-supported-scope-compliance-gate)).
+The claim applies to builds with the `rel18-sbi` profile (HTTP/2, TLS). It covers
+exactly this scope:
+
+| In scope | Specification (baseline) |
+|---|---|
+| Nnwdaf_AnalyticsInfo (`GET /nnwdaf-analyticsinfo/v1/analytics`) and Nnwdaf_EventsSubscription (Subscribe, Modify, Unsubscribe, Notify) | TS 29.520 V18.14.0 |
+| Analytics ID **NF_LOAD** | TS 23.288 V18.13.0; TS 29.520 V18.14.0 |
+| HTTP/2 SBI, ProblemDetails and application errors, supported-features negotiation | TS 29.500 V18.10.0; TS 29.571 V18.12.0 |
+| NRF NFRegister, NFUpdate (heartbeat), NFDeregister and NFDiscovery, with a truthful NF profile | TS 29.510 V18.11.0 |
+| Mutual TLS and OAuth 2.0 access-token validation | TS 33.501 V18.12.0 |
+
+**Not covered** (each row below says why):
+- the other analytics IDs, which are served only on the Open5GS operator API or need inputs this deployment lacks;
+- context and subscription transfer;
+- the ML-model services;
+- roaming;
+- DCCF and ADRF;
+- user consent.
+
+In Open5GS deployments, the NFs expose no event-exposure services and have no OAuth 2.0 (see the interoperability records). Analytics that need those inputs therefore can't be offered through standard data collection there.
 
 **Roadmap:** work items refer to
 [`ENHANCEMENT_PLAN_5G_6G.md`](ENHANCEMENT_PLAN_5G_6G.md). H1.1–H1.6 are the
@@ -69,9 +87,9 @@ baseline version.
 | Capability | Code | 3GPP reference | Current status | Rel-18 gap | Roadmap item | Required action |
 |---|---|---|---|---|---|---|
 | Notification body | `deliverRel18` · test `tests/test_3gpp_sbi.cpp` "H1.7: NF_LOAD notifications are Rel-18 NnwdafEventsSubscriptionNotification", which validates against the official schema | `NnwdafEventsSubscriptionNotification` | Compliant | Operator-API subscriptions keep their own format. | H1.7 | — |
-| Callback header | `deliverRel18` · same test | TS 29.500 V18.10.0 §5.2.3.2.3: `3gpp-Sbi-Callback: Nnwdaf_EventsSubscription_Notify` | Compliant | — | H1.7 | — |
+| Callback header | `deliverRel18` · test `tests/test_3gpp_sbi.cpp` "H1.7: NF_LOAD notifications are Rel-18 NnwdafEventsSubscriptionNotification" | TS 29.500 V18.10.0 §5.2.3.2.3: `3gpp-Sbi-Callback: Nnwdaf_EventsSubscription_Notify` | Compliant | — | H1.7 | — |
 | Target and filters applied to reports | `NwdafSbiService::eventReport` · test `tests/test_3gpp_sbi.cpp` "H1.7: notifications apply the subscription's filters and omit events without data" | EventSubscription targeting and filters | Compliant | — | H1.7 | — |
-| Per-event reporting failure | `deliverRel18` · same test | Table 5.1.6.2.5 NOTE 2 | Compliant | StatisticsFailure isn't supported, so `failNotifyCode` `UNAVAILABLE_DATA` doesn't apply. An event with no data is left out of that round, and this is tested. | H1.7 | — |
+| Per-event reporting failure | `deliverRel18` · test `tests/test_3gpp_sbi.cpp` "H1.7: notifications apply the subscription's filters and omit events without data" | Table 5.1.6.2.5 NOTE 2 | Compliant | StatisticsFailure isn't supported, so `failNotifyCode` `UNAVAILABLE_DATA` doesn't apply. An event with no data is left out of that round, and this is tested. | H1.7 | — |
 
 ## 4. Analytics IDs and output data types
 
@@ -118,7 +136,7 @@ interfaces: NF_LOAD, when `nf_instance_ids` is configured.**
 | Subscription failure semantics | `evaluateSubscription` · tests `tests/test_3gpp_sbi.cpp` (including "H1.7: Subscribe asking for past NF_LOAD statistics is UNAVAILABLE_DATA") | TS 29.520 V18.14.0 Table 5.1.7.3-1 and §4.2.2.2.2 (A.2) | Partially compliant | Implemented and tested: `failEventReports`, `BOTH_STAT_PRED_NOT_ALLOWED` and `UNAVAILABLE_DATA`. `NO_ROAMING_SUPPORT` and `USER_CONSENT_NOT_GRANTED` are not implemented. | H1.7 | Roaming and user-consent handling if those scopes are taken on. |
 | Rejection of unsupported functionality | `evaluateSubscription` · test `tests/test_3gpp_sbi.cpp` "H1.7: unsupported reporting requirements are rejected, not ignored" | Official schema and prose first, then operation-specific failure semantics (A.2, A.4) | Partially compliant | Implemented for the subscription-wide `evtReq` and for events. The per-event attribute capability tables arrive with each mapping in Step 3. | H1.7 | Step 3. |
 | Features that weren't negotiated | `evaluateSubscription` · test `tests/test_3gpp_sbi.cpp` "H1.7: an EneNA-only attribute is ignored when EneNA is not supported (I-2)" | TS 29.500 V18.10.0 §6.6.2 and §5.2.7.2 (A.4) | Compliant | — (I-2) | H1.7 | Every attribute ignored under I-2 is listed in A.5. |
-| Supported-features negotiation | `NwdafFeatureSet`, `NwdafSupportedFeatures` · tests: `tests/test_supported_features.cpp`, `tests/test_3gpp_sbi.cpp` (`suppFeat` and `supportedFeatures` in the `201` body) | TS 29.571 V18.12.0 `SupportedFeatures`; TS 29.520 V18.14.0 Tables 5.1.8-1 and 5.2.8-1; TS 29.500 §6.6.2 | Partially compliant | Negotiation is implemented and tested on both APIs. The local bitmask is NfLoad when `nf_instance_ids` is configured (`80` on AnalyticsInfo, `40` on EventsSubscription). Registering the features in the NRF profile is pending (H1.9). S-1 remains open. | H1.7, H1.9 | NRF profile. |
+| Supported-features negotiation | `tests/test_supported_features.cpp`, `tests/test_3gpp_sbi.cpp`, `tests/test_nrf_client.cpp` | **Met**. Specification item S-1 is carried (SM_CONGESTION isn't subscribable). |
 
 ## 6. Transport — TS 29.500
 
@@ -126,14 +144,14 @@ interfaces: NF_LOAD, when `nf_instance_ids` is configured.**
 |---|---|---|---|---|---|---|
 | HTTP/2 on the SBI | `NwdafH2Server` (`src/nwdaf_h2_server.cpp`, nghttp2) on `sbi_h2_port`; `NwdafHttpClient` (`src/nwdaf_http_client.cpp`, libcurl) for the NRF and Rel-18 notifications · tests: the whole `tests/test_3gpp_sbi.cpp` suite runs over HTTP/2 and asserts the protocol version on every response; "H1.8: the HTTP/2 listener does not accept HTTP/1.1"; `tests/test_sbi_security.cpp` "H1.8: h2 over TLS (ALPN) …" | TS 29.500 V18.10.0 §5.2 | Compliant (rel18-sbi profile) | h2c with prior knowledge, and h2 over TLS negotiated by ALPN. The operator API (port 7779) stays HTTP/1.1; it is not a 3GPP interface. For development, the 3GPP routes are also reachable over HTTP/1.1 on that port, but the NRF advertises the HTTP/2 endpoint only. | H1.8 | — |
 | Compliance profile | `NwdafServer::transportProfile`; CMake `NWDAF_USE_HTTP2`, `NWDAF_REQUIRE_REL18_PROFILE`; CI 22.04 full job · test `tests/test_3gpp_sbi.cpp` "H1.8: /health reports the SBI transport profile" | — | Compliant | `rel18-sbi` (HTTP/2) or `dev-legacy` (HTTP/1.1, explicitly transport non-compliant). The profile is logged at startup and reported on `/health`. The main CI job fails to configure without HTTP/2 and TLS. | H1.8 | — |
-| Interoperability with the Open5GS NRF | `registerWithNrf` and the heartbeat in `src/main.cpp`, over `NwdafHttpClient` | TS 29.510 V18.11.0 NFRegister, NFUpdate (heartbeat) | Compliant (transport) | Validated against Open5GS v2.8.0; see the interoperability records. The *content* of the NF profile is H1.9. | H1.8, H1.9 | — |
+| Interoperability with the Open5GS NRF | `NwdafNrfClient` over `NwdafHttpClient` · tests: `tests/test_nrf_client.cpp` (the protocol, against a mock NRF over HTTP/2), plus the dated interoperability records against the real Open5GS NRF | TS 29.510 V18.11.0 NFRegister, NFUpdate (heartbeat) | Compliant (transport) | Validated against Open5GS v2.8.0; see the interoperability records. The *content* of the NF profile is H1.9. | H1.8, H1.9 | — |
 
 ## 7. NRF interaction — TS 29.510 V18.11.0
 
 | Capability | Code | 3GPP reference | Current status | Rel-18 gap | Roadmap item | Required action |
 |---|---|---|---|---|---|---|
 | NF profile service list | `NwdafNrfClient::profile` (`src/nwdaf_nrf_client.cpp`) · test `tests/test_nrf_client.cpp` "H1.9: the NF profile is a valid Rel-18 NFProfile with both Nnwdaf services", which validates it against the official `NFProfile` schema | `NFProfile.nfServiceList`; `nfServices` is deprecated | Compliant | — | H1.9 | — |
-| Advertised services | `profile()` · same test | `ServiceName` values `nnwdaf-analyticsinfo` (API 1.3.5) and `nnwdaf-eventssubscription` (API 1.3.3) | Compliant | Both services are registered on the HTTP/2 endpoint. Each carries its own local supported-features bitmask when that bitmask is non-empty. | H1.9 | — |
+| Advertised services | `profile()` · test `tests/test_nrf_client.cpp` "H1.9: the NF profile is a valid Rel-18 NFProfile with both Nnwdaf services" | `ServiceName` values `nnwdaf-analyticsinfo` (API 1.3.5) and `nnwdaf-eventssubscription` (API 1.3.3) | Compliant | Both services are registered on the HTTP/2 endpoint. Each carries its own local supported-features bitmask when that bitmask is non-empty. | H1.9 | — |
 | Service scheme | `profile()` · test `tests/test_nrf_client.cpp` "H1.9: scheme and oauth2Required follow the configuration" | `NFService.scheme` | Compliant | — | H1.9 | — |
 | `nwdafInfo` | `profile()` · test `tests/test_nrf_client.cpp` "H1.9: the profile claims nothing that is not supported" | `NwdafInfo` | Compliant | Truthful: `nwdafEvents` and `eventIds` hold the advertised analytics only, and `nwdafInfo` is left out entirely when nothing is advertised. `taiList`, `nwdafCapability`, `analyticsDelay`, the serving-NF lists and `mlAnalyticsList` are omitted because nothing backs them. **Interop note:** the Open5GS v2.8.0 NRF doesn't store `nwdafInfo` (see the interoperability records). | H1.9 | — |
 | Heartbeat | `NwdafNrfClient::heartbeat` · test `tests/test_nrf_client.cpp` "H1.9: heartbeat is an NFUpdate PATCH; 404 re-registers at once" | NFUpdate `PATCH` (`application/json-patch+json`) | Compliant | `404` → immediate NFRegister. Other failures retry with a capped backoff and re-register after three misses. | H1.9 | — |
@@ -155,7 +173,7 @@ interfaces: NF_LOAD, when `nf_instance_ids` is configured.**
 
 | Capability | Code | 3GPP reference | Current status | Rel-18 gap | Roadmap item | Required action |
 |---|---|---|---|---|---|---|
-| Input data sources | `src/nwdaf_collector.cpp` | TS 23.288 data collection from NFs (`Nnf_EventExposure`) and OAM (clause: verify) | Partially compliant | Data comes from OAM-style, implementation-specific sources (journald, procfs, sysfs, MongoDB). There's no location, per-UE volume or S-NSSAI data. | H1.1 (adjusted), H1.2, H1.3 | Adjust H1.1 to name the Rel-18 input events each unblocked analytics ID needs. |
+| Input data sources | `src/nwdaf_collector.cpp` | TS 23.288 V18.13.0 data collection from NFs (`Nnf_EventExposure`) and OAM | Partially compliant | The collector uses OAM-style, implementation-specific sources (journald, procfs, sysfs, MongoDB). Open5GS v2.8.0 implements none of the NF event-exposure services (interoperability records), so standard collection isn't available from an Open5GS core. There's no location, per-UE volume or S-NSSAI data. | H1.1 (adjusted), H1.2, H1.3 | Keep scraping as the Open5GS path. H1.1 adds an event-exposure backend for cores that implement it. |
 | DCCF, ADRF, historical analytics | — | TS 23.288 | Optional | Not implemented. | H2.5 | After M1. |
 | ML model training, provisioning and monitoring; federated learning; accuracy | — | `nnwdaf-mlmodelprovision`, `nnwdaf-mlmodeltraining`, `nnwdaf-mlmodelmonitor`, `accuReq`/`accuInfo` | Optional | Not implemented. Not needed for an NWDAF that only does analytics (AnLF). | H2.1, H2.3, H2.6, H3.3 | After M1. |
 | Roaming analytics | — | `nnwdaf-roaminganalytics`, `roamingInfo` | Out of scope | — | H3.6 | Handle `roamingInfo` requests through the failure semantics (for example `NO_ROAMING_SUPPORT` where that code applies). |
@@ -174,17 +192,17 @@ or a recorded manual check as evidence.
 
 | Criterion | Evidence | Status |
 |---|---|---|
-| Conformant AnalyticsInfo and EventsSubscription APIs | `test_3gpp_sbi`, run over HTTP/2 | Open |
-| Every advertised analytics ID produces output that validates against the official schemas | Official-schema suite in `test_openapi_conformance` | Open |
+| Conformant AnalyticsInfo and EventsSubscription APIs | `tests/test_3gpp_sbi.cpp`, run over HTTP/2 in the Ubuntu 22.04 CI job | **Met** for the supported scope |
+| Every advertised analytics ID produces output that validates against the official schemas | `tests/test_3gpp_sbi.cpp`: NF_LOAD `AnalyticsData`, `NnwdafEventsSubscription` and `NnwdafEventsSubscriptionNotification` are validated against the pinned official schemas | **Met**: NF_LOAD is the only advertised ID |
 | Unsupported IDs aren't advertised; advertised ⊆ implemented ⊆ known; advertisement doesn't flap on transient failures; a real capability change is reflected in the NRF profile | `test_analytics_catalogue`, `test_nrf_client` | **Met** (capability changes are restart-only, and the restart re-registers with NFRegister) |
-| Requests are validated against the official schema first. A schema-valid request we don't support gets the operation-specific failure semantics. | `test_3gpp_sbi`, `test_schema_validator` | Open |
+| Requests are validated against the official schema first. A schema-valid request we don't support gets the operation-specific failure semantics. | `tests/test_3gpp_sbi.cpp`, `tests/test_schema_validator.cpp` | **Met** |
 | HTTP/2 conformance, over both h2c and TLS h2 | `tests/test_3gpp_sbi.cpp` over HTTP/2 in the Ubuntu 22.04 full CI job (`NWDAF_REQUIRE_REL18_PROFILE`); `tests/test_sbi_security.cpp` h2/TLS tests | **Met** |
 | Correct NRF registration, a truthful profile, and the full lifecycle | `test_nrf_client` (a mock NRF over HTTP/2); Open5GS interop records | **Met**: register, heartbeat, `404` re-registration, deregister, and NF discovery |
-| ProblemDetails, application errors and the per-operation failure semantics | `test_3gpp_sbi` | Open |
-| Supported-features negotiation | `test_supported_features`, `test_3gpp_sbi`, `test_nrf_client` | Open |
+| ProblemDetails, application errors and the per-operation failure semantics | `tests/test_3gpp_sbi.cpp` | **Met** for the supported scope. `NO_ROAMING_SUPPORT` is out of scope; `USER_CONSENT_NOT_GRANTED` is optional and not implemented. |
+| Supported-features negotiation | `tests/test_supported_features.cpp`, `tests/test_3gpp_sbi.cpp`, `tests/test_nrf_client.cpp` | **Met**. Specification item S-1 is carried (SM_CONGESTION isn't subscribable). |
 | mTLS and OAuth2 access-token validation | `test_sbi_security`, `test_oauth` | **Met** |
-| Every Compliant row in this document names a passing test | Cross-check of the tests this document cites | Open |
-| Manual interoperability with Open5GS, either validated or marked Requires verification | A dated record below | NRF: **validated** (2026-09-28). Notification consumers: Requires verification (no Open5GS NF subscribes to NWDAF analytics). |
+| Every Compliant row in this document names a passing test | `tests/test_compliance_doc.cpp` checks that every Compliant row cites existing tests and test names; `ctest` in the same CI run proves they pass | **Met** |
+| Manual interoperability with Open5GS, either validated or marked Requires verification | The dated records below | **Met**. The NRF is validated. Notification consumers and OAuth 2.0 are Requires verification: Open5GS has no NF that subscribes to NWDAF analytics, and no OAuth 2.0. |
 | Baseline items B-1 and B-2 resolved or explicitly carried forward | [`frozen-standards.md`](frozen-standards.md) | **Met**: both closed |
 
 ### Interoperability records
@@ -193,6 +211,7 @@ or a recorded manual check as evidence.
 |---|---|---|---|
 | 2026-09-28 | Open5GS NRF **v2.8.0** (`open5gs-nrf`, ppa:open5gs/latest, Ubuntu 22.04) | NRF and NWDAF in containers sharing one network namespace; NRF on `127.0.0.10:7777`, NWDAF 3GPP interfaces on `127.0.0.1:7780` (h2c) | **HTTP/1.1 NFRegister rejected** by the NRF (`nghttp2_session_mem_recv() failed (-903: Received bad client magic byte string)`): pre-H1.8 builds could not register. **With H1.8:** NFRegister `201 Created` over HTTP/2; NFUpdate heartbeat `204` every 3 s; the NRF lists the NWDAF with its HTTP/2 endpoint (port 7780); `GET /nnwdaf-analyticsinfo/v1/analytics` over h2c answered as specified. The profile the NRF stored shows the H1.9 gaps: only `nnwdaf-analyticsinfo`, `apiFullVersion` "1.0.0", no `nwdafInfo`, no supported features. |
 | 2026-09-28 | Open5GS NRF **v2.8.0**, same topology | H1.9 client; `nf_instance_ids` set to a test value so that NF_LOAD is advertised | NFRegister `201` over HTTP/2. The NRF stores both services, `nnwdaf-analyticsinfo` (`apiFullVersion` 1.3.5) and `nnwdaf-eventssubscription` (1.3.3), each on the HTTP/2 endpoint (port 7780). Heartbeats `204` every 3 s. On SIGTERM the NWDAF sends NFDeregister: the NRF logs `NF de-registered`, and a later GET of the profile returns `404`. **Open5GS limitation:** the NRF does not store the sent `nwdafInfo` or the per-service `supportedFeatures`; the stored profile omits them. Consumers therefore can't discover this NWDAF by analytics ID through an Open5GS v2.8.0 NRF. |
+| 2026-09-28 | Open5GS **v2.8.0** AMF, SMF and UPF (`open5gs-amf`, `open5gs-smf`, `open5gs-upf`, ppa:open5gs/latest) | NRF, AMF and SMF running together; direct requests to the standard data-collection services | **Open5GS implements no NF event-exposure service.** The AMF answers `POST /namf-evts/v1/subscriptions` with `400` and logs `Not implemented API name [namf-evts]` (Namf_EventExposure, TS 29.518). The SMF does the same for `nsmf-event-exposure` (Nsmf_EventExposure, TS 29.508). The UPF has no SBI at all, so there's no Nupf_EventExposure (TS 29.564). Standard data collection (TS 23.288) is therefore not available from an Open5GS core. This is why the collector scrapes journald, `/proc` and `/sys`, and why H1.1's SBI backend can only serve other cores. |
 | 2026-09-28 | Open5GS **v2.8.0** (NRF, and the SBI library shared by all Open5GS NFs) | Binary inspection and a standard `POST /oauth2/token` (Nnrf_AccessToken) to the NRF | **Open5GS does not implement OAuth 2.0.** Only its OpenAPI-generated data model (`libogssbi-openapi`) contains the AccessToken types. The NRF has no token endpoint (the request fails in its generic JSON parser with `400`), and Open5GS NFs never send tokens. So in Open5GS deployments `oauth_enabled` must stay `false`, which is the default. Token validation interop remains **Requires verification** with a 3GPP NRF that issues tokens. |
 | 2026-09-28 | Open5GS NRF **v2.8.0**, same topology | NF discovery: a stand-in AMF profile registered with the NRF; NWDAF started with `nrf_nf_discovery: true` and no `nf_instance_ids` | The first refresh resolved the AMF's instance ID through `GET /nnrf-disc/v1/nf-instances?target-nf-type=AMF&requester-nf-type=NWDAF` over HTTP/2. The NRF's own instance was resolved too. |
 

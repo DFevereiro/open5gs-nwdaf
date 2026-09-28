@@ -4,14 +4,14 @@
 
 ### Production-grade Network Data Analytics Function for 5G Core — in modern C++
 
-**Standalone, 3GPP Release-17-based NWDAF that plugs into [Open5GS](https://open5gs.org) and brings native ML-driven analytics to your 5G core. Release 18 compliance for the supported scope is in progress. Status: [`docs/3gpp-rel18-compliance.md`](docs/3gpp-rel18-compliance.md).**
+**Standalone NWDAF that plugs into [Open5GS](https://open5gs.org) and brings native ML-driven analytics to your 5G core — Release 18 compliant for the supported scope.** Both Nnwdaf services over HTTP/2 with the NF_LOAD analytics, the NRF lifecycle and discovery, mTLS and OAuth2; scope and evidence in [`docs/3gpp-rel18-compliance.md`](docs/3gpp-rel18-compliance.md).
 
 [![CI](https://github.com/cem8kaya/open5gs-nwdaf/actions/workflows/ci.yml/badge.svg)](https://github.com/cem8kaya/open5gs-nwdaf/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![C++17](https://img.shields.io/badge/C%2B%2B-17-00599C.svg?logo=cplusplus&logoColor=white)](https://isocpp.org/)
-[![3GPP Rel-17](https://img.shields.io/badge/3GPP-Release_17-green.svg)](https://www.3gpp.org/specifications-technologies/releases/release-17)
-[![TS 23.288](https://img.shields.io/badge/TS_23.288-v17.3.0-orange.svg)](https://portal.3gpp.org/desktopmodules/Specifications/SpecificationDetails.aspx?specificationId=3579)
-[![TS 29.520](https://img.shields.io/badge/TS_29.520-v17.7.0-orange.svg)](https://portal.3gpp.org/desktopmodules/Specifications/SpecificationDetails.aspx?specificationId=3355)
+[![3GPP Rel-18 (supported scope)](https://img.shields.io/badge/3GPP-Release_18_(supported_scope)-green.svg)](docs/3gpp-rel18-compliance.md)
+[![TS 23.288](https://img.shields.io/badge/TS_23.288-V18.13.0-orange.svg)](https://portal.3gpp.org/desktopmodules/Specifications/SpecificationDetails.aspx?specificationId=3579)
+[![TS 29.520](https://img.shields.io/badge/TS_29.520-V18.14.0-orange.svg)](https://portal.3gpp.org/desktopmodules/Specifications/SpecificationDetails.aspx?specificationId=3355)
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ED.svg?logo=docker&logoColor=white)](Dockerfile)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](#-contributing)
 
@@ -125,7 +125,7 @@ IDs are spelled as in the Rel-18 `NwdafEvent` enum. The operator API still accep
 
 **Referenced specifications (Rel-17 baseline of the current implementation):** TS 23.288 v17.3.0 (architecture) · TS 29.520 v17.7.0 (Nnwdaf services) · TS 29.510 v17.6.0 (NRF) · TS 28.554 v17.4.0 (KPIs) · TS 33.501 (security)
 
-**Release 18.** The frozen Rel-18 baseline is [`docs/frozen-standards.md`](docs/frozen-standards.md), and the gap analysis is [`docs/3gpp-rel18-compliance.md`](docs/3gpp-rel18-compliance.md). **No Rel-18 compliance is claimed yet.** The claim "Release 18 compliant for the supported scope" is gated on milestone M1.
+**Release 18.** The frozen Rel-18 baseline is [`docs/frozen-standards.md`](docs/frozen-standards.md), and the gap analysis is [`docs/3gpp-rel18-compliance.md`](docs/3gpp-rel18-compliance.md). Milestone **M1 passed** (2026-09-28): the NWDAF is **Release 18 compliant for the supported scope**, in builds with the `rel18-sbi` profile (HTTP/2 + TLS). The Rel-18 3GPP interfaces serve **NF_LOAD**. The other analytics listed above are served on the operator API; their Rel-18 forms are not yet advertised, because they need inputs the scraped data path lacks. Open5GS v2.8.0 exposes no NF event-exposure services and no OAuth 2.0 (see the compliance doc).
 
 ### OpenAPI contract
 
@@ -371,11 +371,11 @@ and the [5G/6G enhancement plan project board](https://github.com/users/cem8kaya
 - [x] `DISPERSION`, `SM_CONGESTION`, `RED_TRANS_EXP` analytics ([#26](https://github.com/cem8kaya/open5gs-nwdaf/issues/26), partial)
 - [x] MOS / service-experience E-model upgrade ([#27](https://github.com/cem8kaya/open5gs-nwdaf/issues/27))
 - [x] OpenAPI 3.0 spec published + CI conformance test ([#28](https://github.com/cem8kaya/open5gs-nwdaf/issues/28))
-- [ ] H1.7 — 3GPP Nnwdaf SBI conformance (Rel-18 resources, data types, failure semantics, supported features)
-- [ ] H1.8 — HTTP/2 SBI transport + compliance profile
-- [ ] H1.9 — Truthful Rel-18 NRF profile, lifecycle and discovery
-- [ ] H1.10 — SBI security: mTLS, OAuth2 access-token validation, NRF client TLS
-- [ ] **M1 — Rel-18 supported-scope compliance gate.** See [`docs/3gpp-rel18-compliance.md`](docs/3gpp-rel18-compliance.md)
+- [x] H1.7 — 3GPP Nnwdaf SBI conformance (Rel-18 resources, data types, failure semantics, supported features; NF_LOAD, with more IDs to follow)
+- [x] H1.8 — HTTP/2 SBI transport + compliance profile
+- [x] H1.9 — Truthful Rel-18 NRF profile, lifecycle and discovery
+- [x] H1.10 — SBI security: mTLS, OAuth2 access-token validation, NRF client TLS
+- [x] **M1 — Rel-18 supported-scope compliance gate** (passed 2026-09-28). See [`docs/3gpp-rel18-compliance.md`](docs/3gpp-rel18-compliance.md)
 - [ ] Pluggable `IDataSource` ingestion — SBI / OAM backend ([#23](https://github.com/cem8kaya/open5gs-nwdaf/issues/23))
 - [ ] Slice awareness (S-NSSAI) + `SLICE_LOAD_LEVEL` (TS 23.288 §6.3) ([#24](https://github.com/cem8kaya/open5gs-nwdaf/issues/24))
 - [ ] PFCP usage reporting → per-UE / per-session analytics ([#25](https://github.com/cem8kaya/open5gs-nwdaf/issues/25))

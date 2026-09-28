@@ -28,6 +28,7 @@ add_executable(nwdaf_tests
     test_schema_validator.cpp    # H1.7 OpenAPI validator against the official artifacts
     test_supported_features.cpp  # H1.7 TS 29.571 SupportedFeatures + negotiation
     test_oauth.cpp               # H1.10 access-token validation (TLS builds)
+    test_compliance_doc.cpp      # M1: Compliant rows cite existing tests
 )
 target_include_directories(nwdaf_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -40,6 +41,7 @@ target_link_libraries(nwdaf_tests PRIVATE
 )
 target_compile_definitions(nwdaf_tests PRIVATE
     NWDAF_3GPP_OPENAPI_DIR="${NWDAF_3GPP_OPENAPI_DIR}"
+    NWDAF_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
 )
 
 # Integration tests bind to port 17779 and must not run in parallel with each

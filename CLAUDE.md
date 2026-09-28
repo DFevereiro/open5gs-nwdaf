@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A standalone 3GPP Rel-17 NWDAF (Network Data Analytics Function) daemon, `open5gs-nwdafd`, written in C++17. It sits beside an Open5GS 5G core and needs no core patches: it scrapes journald, `/proc`, `/sys` and MongoDB, runs native C++ ML, and serves analytics over a TS 29.520 SBI (HTTP/JSON on port 7779, which avoids Open5GS's 7777). Spec references: TS 23.288 (analytics IDs), TS 29.520 (Nnwdaf SBI), TS 29.510 (NRF), TS 33.501 (security).
+A standalone NWDAF (Network Data Analytics Function) daemon, Release 18 compliant for a documented supported scope (see below), `open5gs-nwdafd`, written in C++17. It sits beside an Open5GS 5G core and needs no core patches: it scrapes journald, `/proc`, `/sys` and MongoDB, runs native C++ ML, and serves analytics over a TS 29.520 SBI (HTTP/JSON on port 7779, which avoids Open5GS's 7777). Spec references: TS 23.288 (analytics IDs), TS 29.520 (Nnwdaf SBI), TS 29.510 (NRF), TS 33.501 (security).
 
 ## Build and test
 
@@ -106,8 +106,8 @@ IDs use the Rel-18 `NwdafEvent` spelling (`QOS_SUSTAINABILITY`, `RED_TRANS_EXP`)
 
 - `docs/frozen-standards.md` is the **immutable** spec baseline. It pins the official 3GPP OpenAPI artifacts (forge.3gpp.org `5G_APIs`, commit `d05657604fa1`) and records open baseline items B-1 and B-2. Never change the versions or the pin silently. A baseline change needs a dated amendment in that file.
 - `docs/3gpp-rel18-compliance.md` is the gap and status tracker.
-  - A row may be marked **Compliant** only if it cites a passing test.
-  - **No Rel-18 claim may be made until milestone M1 passes**.
+  - A row may be marked **Compliant** only if it cites a passing test. `tests/test_compliance_doc.cpp` enforces this: every Compliant row must name existing `tests/*.cpp` files and `TEST_CASE` names (a trailing "…" is a prefix).
+  - **M1 passed on 2026-09-28.** The claim "Release 18 compliant for the supported scope" covers exactly the scope table at the top of the compliance doc: both Nnwdaf services with NF_LOAD, HTTP/2, NRF lifecycle and discovery, mTLS and OAuth2, in the `rel18-sbi` build profile. Don't widen the claim without widening that table and its tests.
 - The work is sequenced as H1.7–H1.10, then M1, in `docs/ENHANCEMENT_PLAN_5G_6G.md`.
 - **Two SBI surfaces:**
   - `/nwdaf-analytics/v1/*` is the Open5GS **operator API** (dashboard, Prometheus). It is not a 3GPP interface; keep its behaviour stable.
@@ -124,6 +124,7 @@ IDs use the Rel-18 `NwdafEvent` spelling (`QOS_SUSTAINABILITY`, `RED_TRANS_EXP`)
   - Outbound NRF traffic and Rel-18 notifications go through `NwdafHttpClient` (libcurl h2c/h2). Operator-API notifications stay on httplib.
   - `tests/test_3gpp_sbi.cpp` talks to the HTTP/2 listener when the build has `NWDAF_USE_HTTP2`, and asserts the protocol version. Test servers that don't need HTTP/2 set `sbi_h2_port = 0`.
   - The Open5GS NRF rejects HTTP/1.1, so a `NWDAF_USE_HTTP2=OFF` build cannot register with it.
+- **Open5GS v2.8.0 limits:** no NF event-exposure services (`namf-evts` and `nsmf-event-exposure` are "Not implemented", and the UPF has no SBI), no OAuth 2.0, and the NRF doesn't store `nwdafInfo`. These are verified; see the interoperability records. Data collection therefore stays on scraping for Open5GS.
 - **Spec texts:** the 3GPP FTP archive refuses automated access. Use the ETSI publications (`etsi.org/deliver/etsi_ts/1295xx_…`, ETSI TS 1xx xxx = TS xx.xxx).
 - **Advertisement** (NRF `nwdafInfo`) reflects implemented and configured capability only, never transient data availability.
 
