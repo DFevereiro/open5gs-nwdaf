@@ -612,7 +612,7 @@ components:
             pduScore:      { type: number, minimum: 0, maximum: 100 }
         confidence:   { type: integer, minimum: 0, maximum: 100 }
 
-    # H1.4 — TS 23.288 §6.16 session-management congestion control experience.
+    # H1.4 — TS 23.288 §6.12 session-management congestion control experience.
     SmCongestionData:
       type: object
       required: [analyticsId, ts, dnn, snssai, congestionLevel, sessionEstAttempts,
@@ -632,7 +632,7 @@ components:
         upLoadPct:       { type: number, minimum: 0 }
         smcceUeList:
           type: object
-          description: TS 23.288 §6.16 — UEs bucketed by observed congestion.
+          description: TS 23.288 §6.12 — UEs bucketed by observed congestion.
           required: [highLevelCongestion, mediumLevelCongestion, lowLevelCongestion]
           properties:
             highLevelCongestion:   { type: array, items: { type: string } }
@@ -645,7 +645,7 @@ components:
         note:       { type: string }
         confidence: { type: integer, minimum: 0, maximum: 100 }
 
-    # H1.4 — TS 23.288 §6.12 redundant transmission experience.
+    # H1.4 — TS 23.288 §6.13 redundant transmission experience.
     RedundantTransmissionData:
       oneOf:
         - $ref: '#/components/schemas/RedundantTransmissionScored'

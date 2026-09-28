@@ -97,7 +97,12 @@ flowchart LR
 
 ## 📐 3GPP Compliance
 
-| Analytics ID | TS 23.288 (Rel-17) | ML backing | Status |
+This table covers the **operator API** (`/nwdaf-analytics/v1/*`), where each ID
+is served in this project's own format. On the 3GPP interfaces, only `NF_LOAD`
+is served in Rel-18 form; the others are withheld until their inputs exist. The
+per-ID reasons are in [`docs/3gpp-rel18-compliance.md`](docs/3gpp-rel18-compliance.md) §4.
+
+| Analytics ID | TS 23.288 V18.13.0 | ML backing | Status |
 |---|---|---|---|
 | `NF_LOAD` | §6.5 | EWMA load prediction | ✅ Implemented |
 | `UE_MOBILITY` | §6.7.2 | — | ✅ Implemented |
@@ -106,8 +111,8 @@ flowchart LR
 | `SERVICE_EXPERIENCE` | §6.4 | MOS estimation | ✅ Implemented |
 | `NETWORK_PERFORMANCE` | §6.6 | Weighted composite score | ✅ Implemented |
 | `QOS_SUSTAINABILITY` | §6.9 | Threshold trend analysis | ✅ Implemented |
-| `SM_CONGESTION` | §6.16 | Failure-ratio + NF-load bands | ✅ Implemented |
-| `RED_TRANS_EXP` | §6.12 | Rate-stability estimator | ✅ Implemented |
+| `SM_CONGESTION` | §6.12 | Failure-ratio + NF-load bands | ✅ Implemented |
+| `RED_TRANS_EXP` | §6.13 | Rate-stability estimator | ✅ Implemented |
 | `DISPERSION` | §6.10 | Gini / HHI concentration | ✅ Implemented |
 | `DN_PERFORMANCE` | §6.14 | — | ⬜ Planned (needs `Naf_EventExposure`) |
 | `SLICE_LOAD_LEVEL` | §6.3 | — | ⬜ Planned (needs S-NSSAI threading) |
@@ -270,7 +275,7 @@ curl "http://127.0.0.1:7779/nwdaf-analytics/v1/analytics?analyticsId=NF_LOAD"
 # Anomaly detection
 curl "http://127.0.0.1:7779/nwdaf-analytics/v1/analytics?analyticsId=ABNORMAL_BEHAVIOUR"
 
-# Session-management congestion (TS 23.288 §6.16)
+# Session-management congestion (TS 23.288 §6.12)
 curl "http://127.0.0.1:7779/nwdaf-analytics/v1/analytics?analyticsId=SM_CONGESTION"
 
 # Service experience — MOS with its G.107 impairment breakdown

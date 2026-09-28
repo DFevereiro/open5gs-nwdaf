@@ -37,7 +37,7 @@ Last updated **2026-08-23** (release `v1.1.0`).
 |---|---|---|
 | H1.1 — Pluggable `IDataSource` ingestion | [#23](https://github.com/cem8kaya/open5gs-nwdaf/issues/23) | Not started · *adjusted for Rel-18 (§3a)*. Open5GS v2.8.0 implements no event-exposure service, so the SBI backend targets other cores; scraping stays the Open5GS path |
 | H1.2 — Slice awareness + `SLICE_LOAD_LEVEL` | [#24](https://github.com/cem8kaya/open5gs-nwdaf/issues/24) | Not started · *adjusted for Rel-18 (§3a)* |
-| H1.3 — PFCP usage reporting | [#25](https://github.com/cem8kaya/open5gs-nwdaf/issues/25) | Not started |
+| H1.3 — PFCP usage reporting | [#25](https://github.com/cem8kaya/open5gs-nwdaf/issues/25) | **On hold**: feasibility checked 2026-09-28 (§H1.3) — Open5GS reports only downlink volume per 100 MiB, to the SMF |
 | H1.4 — Rel-17/18 catalogue | [#26](https://github.com/cem8kaya/open5gs-nwdaf/issues/26) | **Partial**: `SM_CONGESTION`, `REDUNDANT_TRANSMISSION` (Rel-18 name `RED_TRANS_EXP`) and `DISPERSION` shipped; `DN_PERFORMANCE`, `USER_DATA_CONGESTION` and `WLAN_PERFORMANCE` are blocked on H1.1–H1.3 · *adjusted for Rel-18 (§3a)* |
 | H1.5 — MOS / service-experience E-model | [#27](https://github.com/cem8kaya/open5gs-nwdaf/issues/27) | **Done** |
 | H1.6 — OpenAPI 3.0 + conformance in CI | [#28](https://github.com/cem8kaya/open5gs-nwdaf/issues/28) | **Done** for the operator API · *extended for Rel-18: official-schema conformance (§3a)* |
@@ -81,10 +81,17 @@ that relate to Rel-18 but are optional stay where they are and come after M1.
 
 **Correction applied 2026-08-23:** the H1.4 table below originally paired the
 `SM_CONGESTION` analytics ID with §6.8. These are two distinct 3GPP analytics —
-`SM_CONGESTION` is §6.16 (session-management congestion control experience)
-while §6.8 is `USER_DATA_CONGESTION` (user-plane congestion by location). The
-implementation follows §6.16, which is what the available SMF event data
-supports; `USER_DATA_CONGESTION` is now listed separately as an open item.
+`SM_CONGESTION` is session-management congestion control experience
+while §6.8 is `USER_DATA_CONGESTION` (user-plane congestion by location).
+`USER_DATA_CONGESTION` is now listed separately as an open item.
+
+**Correction applied 2026-09-28:** checked against TS 23.288 V18.13.0,
+session-management congestion control experience (SMCCE) is **§6.12**, not
+§6.16, and redundant transmission experience is **§6.13**, not §6.12. §6.12
+measures NAS SM rejects with back-off timers under DNN/S-NSSAI congestion
+control. The Open5GS v2.8.0 SMF applies no such control, so the shipped
+`SM_CONGESTION` is an operator-API proxy (failure ratio + NF load), not the
+§6.12 analytics.
 
 ---
 
@@ -145,6 +152,15 @@ Thread **S-NSSAI** (SST/SD) through the data model, features, and API:
 
 This single change upgrades three analytics (`UE_COMMUNICATION`, `QoS_SUSTAINABILITY`, `SERVICE_EXPERIENCE`) from network-wide estimates to per-subscriber truth.
 
+**Feasibility (2026-09-28, Open5GS v2.8.0 source).** The premise is weaker than assumed above:
+
+- The SMF installs one URR per QoS flow: volume measurement, a 100 MiB total-volume threshold, on the **downlink PDR only**. Reports arrive per 100 MiB of downlink traffic and once at session deletion. There is no uplink, time-based or periodic measurement.
+- The reports go only to the SMF, which keeps the volumes for Gy charging and neither logs nor exposes them. The NWDAF is not a PFCP peer, so the only way to observe them is passive capture of N4 (UDP 8805), which needs `CAP_NET_RAW` and a vantage point on the N4 path, and fails if N4 is protected with NDS/IP.
+- Correlation is available: the Session Establishment Request carries the PFCP User ID IE (IMSI), and the PDRs carry the UE IP.
+- The standard Rel-18 source (Nupf_EventExposure, TS 29.564) is not implemented by Open5GS.
+
+At this granularity the data can't support `UE_COMMUNICATION` (§6.7.3 needs per-communication duration and traffic characterization) or observed `SERVICE_EXPERIENCE` (§6.4 needs AF service data). It can give per-SUPI downlink session volume on the operator API. Status: **on hold**, pending a decision on passive N4 capture.
+
 ### H1.4 — Complete the Rel-17/18 analytics catalogue **[TE]** — 🟡 partial (3 of 6 in v1.1.0)
 Prioritized by operator value:
 
@@ -153,9 +169,9 @@ Prioritized by operator value:
 | `SLICE_LOAD_LEVEL` | §6.3 | M | See H1.2 |
 | `DN_PERFORMANCE` | §6.14 | M | Needs AF/edge input (`Naf_EventExposure`) |
 | `DISPERSION` | §6.10 | M | Data volume/session dispersion — pure analytics on existing series |
-| `SM_CONGESTION` | §6.16 | S | SM congestion control experience — reuses SMF events + NF-load features |
+| `SM_CONGESTION` | §6.12 | S | SM congestion control experience — operator-API proxy only; Open5GS applies no SM congestion control |
 | `USER_DATA_CONGESTION` | §6.8 | M | Distinct from the above; needs per-location (TA/cell) input |
-| `REDUNDANT_TRANSMISSION` | §6.12 | S | URLLC use case |
+| `REDUNDANT_TRANSMISSION` | §6.13 | S | URLLC use case |
 | `WLAN_PERFORMANCE` | §6.11 | L | Optional / N3IWF-dependent |
 
 ### H1.5 — MOS/service-experience model upgrade **[DA]** — ✅ delivered in v1.1.0

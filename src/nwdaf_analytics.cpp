@@ -760,15 +760,14 @@ std::string bandOf(double v, double low, double high) {
 }
 }  // namespace
 
-// ── SM_CONGESTION (TS 23.288 §6.16 — SM congestion control experience) ───────
+// ── SM_CONGESTION (TS 23.288 V18.13.0 §6.12 — SM congestion control experience)
 //
-// NOTE ON SCOPE: the enhancement plan's H1.4 table pairs the `SM_CONGESTION`
-// analytics ID with §6.8, but §6.8 is `USER_DATA_CONGESTION` — a distinct
-// analytic keyed on user-plane congestion at a location. `SM_CONGESTION` is
-// §6.16 and is about session-management congestion control (establishment
-// rejects, back-off). This implementation follows §6.16, which is what the
-// available SMF event data actually supports; `USER_DATA_CONGESTION` remains
-// an open catalogue item because it needs per-location (TA/cell) input.
+// NOTE ON SCOPE: `SM_CONGESTION` is §6.12, not §6.8 (`USER_DATA_CONGESTION`,
+// user-plane congestion at a location, still an open catalogue item).
+// §6.12 measures NAS SM rejects with back-off timers under DNN/S-NSSAI
+// congestion control. The Open5GS SMF applies no such control, so this is an
+// operator-API proxy built from session failures and NF load; it is not
+// served on the 3GPP interfaces (compliance doc §4).
 
 json NwdafAnalyticsEngine::smCongestion(const std::string& supi,
                                          const std::string& start_ts,
@@ -811,7 +810,7 @@ json NwdafAnalyticsEngine::smCongestion(const std::string& supi,
     else if (failure_ratio >= 5.0  || cp_load >= 60.0 || upf_load >= 60.0) level = "MEDIUM";
     else if (failure_ratio > 0.0   || cp_load >= 40.0 || upf_load >= 40.0) level = "LOW";
 
-    // TS 23.288 §6.16 smcceUeList — UEs bucketed by the congestion they saw.
+    // TS 23.288 §6.12 smcceUeList — UEs bucketed by the congestion they saw.
     json high_ues = json::array(), med_ues = json::array(), low_ues = json::array();
     for (const auto& [ue, counts] : per_ue) {
         int ue_attempts = counts.first, ue_failures = counts.second;
@@ -856,7 +855,7 @@ json NwdafAnalyticsEngine::smCongestion(const std::string& supi,
     return result;
 }
 
-// ── RED_TRANS_EXP (redundant transmission experience; TS 23.288 clause: verify)
+// ── RED_TRANS_EXP (TS 23.288 V18.13.0 §6.13 — redundant transmission experience)
 
 json NwdafAnalyticsEngine::redundantTransmission(const std::string& supi,
                                                   const std::string& start_ts,
@@ -904,7 +903,7 @@ json NwdafAnalyticsEngine::redundantTransmission(const std::string& supi,
     double dl_exp = experience(dl), ul_exp = experience(ul);
     double dl_var = var_of(dl),     ul_var = var_of(ul);
 
-    // Per-time-slot experience (§6.12 redTransExpPerTS) — the window split into
+    // Per-time-slot experience (§6.13 redTransExpPerTS) — the window split into
     // equal slots so a consumer can see when reliability dipped.
     const int slots = std::min(6, n);
     json per_ts = json::array();

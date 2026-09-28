@@ -124,7 +124,7 @@ IDs use the Rel-18 `NwdafEvent` spelling (`QOS_SUSTAINABILITY`, `RED_TRANS_EXP`)
   - Outbound NRF traffic and Rel-18 notifications go through `NwdafHttpClient` (libcurl h2c/h2). Operator-API notifications stay on httplib.
   - `tests/test_3gpp_sbi.cpp` talks to the HTTP/2 listener when the build has `NWDAF_USE_HTTP2`, and asserts the protocol version. Test servers that don't need HTTP/2 set `sbi_h2_port = 0`.
   - The Open5GS NRF rejects HTTP/1.1, so a `NWDAF_USE_HTTP2=OFF` build cannot register with it.
-- **Open5GS v2.8.0 limits:** no NF event-exposure services (`namf-evts` and `nsmf-event-exposure` are "Not implemented", and the UPF has no SBI), no OAuth 2.0, and the NRF doesn't store `nwdafInfo`. These are verified; see the interoperability records. Data collection therefore stays on scraping for Open5GS.
+- **Open5GS v2.8.0 limits:** no NF event-exposure services (`namf-evts` and `nsmf-event-exposure` are "Not implemented", and the UPF has no SBI), no OAuth 2.0, the NRF doesn't store `nwdafInfo`, the SMF applies no SM congestion control (so no §6.12 SMCCE data), there's no AF service data (so no §6.4 observed service experience), and PFCP usage reports carry only downlink volume per 100 MiB, sent to the SMF. These are verified; see the interoperability records. Data collection therefore stays on scraping for Open5GS.
 - **Spec texts:** the 3GPP FTP archive refuses automated access. Use the ETSI publications (`etsi.org/deliver/etsi_ts/1295xx_…`, ETSI TS 1xx xxx = TS xx.xxx).
 - **Advertisement** (NRF `nwdafInfo`) reflects implemented and configured capability only, never transient data availability.
 
