@@ -17,6 +17,7 @@
 #include <memory>
 #include <thread>
 #include <cctype>
+#include <ctime>
 
 using json = nlohmann::json;
 
@@ -600,5 +601,113 @@ TEST_CASE("H1.7: NF_LOAD notifications are Rel-18 NnwdafEventsSubscriptionNotifi
     REQUIRE(n["eventNotifications"][0]["event"] == "NF_LOAD");
     REQUIRE(n["eventNotifications"][0]["nfLoadLevelInfos"].size() == 2);
     REQUIRE_FALSE(srv.subs.exists(id));   // ONE_TIME ended it
+}
+#endif
+
+TEST_CASE("H1.7: Subscribe asking for past NF_LOAD statistics is UNAVAILABLE_DATA") {
+    (void)nfLoadServer();
+    json sub = nfLoadSub(json(), {{"extraReportReq",
+        {{"startTs", "2020-01-01T00:00:00Z"}, {"endTs", "2020-01-02T00:00:00Z"}}}});
+    requireProblem(client().Post(SUBS, sub.dump(), "application/json"), 500, "UNAVAILABLE_DATA");
+}
+
+#ifdef NWDAF_ENABLE_PUSH_DELIVERY
+// Records every notification POSTed to /notify on port 17790.
+struct MockConsumer {
+    httplib::Server server;
+    std::thread thread;
+    std::mutex m;
+    std::condition_variable cv;
+    std::vector<json> received;
+
+    MockConsumer() {
+        server.Post("/notify", [this](const httplib::Request& req, httplib::Response& res) {
+            std::lock_guard<std::mutex> lk(m);
+            received.push_back(json::parse(req.body));
+            res.status = 204;
+            cv.notify_all();
+        });
+        thread = std::thread([this] { server.listen("127.0.0.1", 17790); });
+    }
+    ~MockConsumer() {
+        server.stop();
+        thread.join();
+    }
+    // Waits until at least n notifications arrived or the timeout passed.
+    size_t waitFor(size_t n, std::chrono::seconds timeout) {
+        std::unique_lock<std::mutex> lk(m);
+        cv.wait_for(lk, timeout, [&] { return received.size() >= n; });
+        return received.size();
+    }
+    size_t count() {
+        std::lock_guard<std::mutex> lk(m);
+        return received.size();
+    }
+};
+
+static std::string createdId(const httplib::Result& res) {
+    REQUIRE(res);
+    INFO(res->body);
+    REQUIRE(res->status == 201);
+    const std::string loc = res->get_header_value("Location");
+    return loc.substr(loc.rfind('/') + 1);
+}
+
+TEST_CASE("H1.7: PERIODIC notifications repeat and stop at maxReportNbr") {
+    auto& srv = nfLoadServer();
+    MockConsumer consumer;
+    json sub = nfLoadSub({{"notifMethod", "PERIODIC"}, {"repPeriod", 1}, {"maxReportNbr", 2}});
+    const std::string id = createdId(client().Post(SUBS, sub.dump(), "application/json"));
+
+    NwdafNotifier notifier(srv.subs, srv.engine, 1, nullptr, nullptr, srv.cfg);
+    notifier.start();
+    REQUIRE(consumer.waitFor(2, std::chrono::seconds(10)) >= 2);
+    std::this_thread::sleep_for(std::chrono::seconds(3));   // would-be third period
+    notifier.stop();
+
+    REQUIRE(consumer.count() == 2);            // maxReportNbr reached …
+    REQUIRE_FALSE(srv.subs.exists(id));        // … and the subscription ended
+}
+
+TEST_CASE("H1.7: a subscription ends when monDur elapses") {
+    auto& srv = nfLoadServer();
+    MockConsumer consumer;
+    const auto end = std::chrono::system_clock::now() + std::chrono::seconds(2);
+    const auto t = std::chrono::system_clock::to_time_t(end);
+    char mon_dur[32];
+    std::strftime(mon_dur, sizeof(mon_dur), "%Y-%m-%dT%H:%M:%SZ", std::gmtime(&t));
+    json sub = nfLoadSub({{"notifMethod", "PERIODIC"}, {"repPeriod", 1}, {"monDur", mon_dur}});
+    const std::string id = createdId(client().Post(SUBS, sub.dump(), "application/json"));
+
+    NwdafNotifier notifier(srv.subs, srv.engine, 1, nullptr, nullptr, srv.cfg);
+    notifier.start();
+    std::this_thread::sleep_for(std::chrono::seconds(5));
+    notifier.stop();
+
+    REQUIRE(consumer.count() >= 1);            // reported while monitoring …
+    REQUIRE_FALSE(srv.subs.exists(id));        // … and ended after monDur
+}
+
+TEST_CASE("H1.7: notifications apply the subscription's filters and omit events without data") {
+    auto& srv = nfLoadServer();
+    MockConsumer consumer;
+    // Two NF_LOAD events: UPF (measured) and NRF (no measurement).
+    json sub = nfLoadSub({{"notifMethod", "ONE_TIME"}}, {{"nfTypes", {"UPF"}}});
+    json nrf = sub["eventSubscriptions"][0];
+    nrf["nfTypes"] = {"NRF"};
+    sub["eventSubscriptions"].push_back(nrf);
+    (void)createdId(client().Post(SUBS, sub.dump(), "application/json"));
+
+    NwdafNotifier notifier(srv.subs, srv.engine, 1, nullptr, nullptr, srv.cfg);
+    notifier.start();
+    REQUIRE(consumer.waitFor(1, std::chrono::seconds(8)) == 1);
+    notifier.stop();
+
+    const json n = consumer.received.front();
+    REQUIRE(n["eventNotifications"].size() == 1);   // the NRF event had no data
+    const json& infos = n["eventNotifications"][0]["nfLoadLevelInfos"];
+    REQUIRE(infos.size() == 1);
+    REQUIRE(infos[0]["nfType"] == "UPF");
+    REQUIRE_FALSE(n["eventNotifications"][0].contains("failNotifyCode"));
 }
 #endif
