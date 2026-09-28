@@ -4,7 +4,7 @@
 
 ### Production-grade Network Data Analytics Function for 5G Core — in modern C++
 
-**Standalone, 3GPP Release-17 compliant NWDAF that plugs into [Open5GS](https://open5gs.org) and brings native ML-driven analytics to your 5G core.**
+**Standalone, 3GPP Release-17-based NWDAF that plugs into [Open5GS](https://open5gs.org) and brings native ML-driven analytics to your 5G core. Release 18 compliance for the supported scope is in progress. Status: [`docs/3gpp-rel18-compliance.md`](docs/3gpp-rel18-compliance.md).**
 
 [![CI](https://github.com/cem8kaya/open5gs-nwdaf/actions/workflows/ci.yml/badge.svg)](https://github.com/cem8kaya/open5gs-nwdaf/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
@@ -31,8 +31,8 @@ The **NWDAF (Network Data Analytics Function)** is the intelligence layer of the
 
 - **Zero-friction Open5GS integration** — registers with the NRF, reads journald/`/proc`/`/sys`/MongoDB, no core patches required
 - **Native, dependency-light ML** — Isolation Forest anomaly detection and EWMA prediction implemented in pure C++, no Python runtime, no TensorFlow
-- **Spec-first design** — analytics IDs, SBI resource paths, subscription model and NRF registration follow TS 23.288 / TS 29.520 / TS 29.510
-- **Ops-ready from day one** — Prometheus metrics, Grafana dashboard, React web UI, systemd unit, hardened Docker build, TLS/mTLS, OAuth2, rate limiting
+- **Spec-anchored design:** the analytics IDs follow TS 23.288, and NRF registration follows TS 29.510. The current SBI is a custom API modelled on TS 29.520. Moving it onto the standard Rel-18 resources, data types and HTTP/2 transport is tracked in [`docs/3gpp-rel18-compliance.md`](docs/3gpp-rel18-compliance.md).
+- **Ops-ready from day one** — Prometheus metrics, Grafana dashboard, React web UI, systemd unit, hardened Docker build, TLS/mTLS, rate limiting
 
 ## ✨ Features
 
@@ -43,7 +43,7 @@ The **NWDAF (Network Data Analytics Function)** is the intelligence layer of the
 | 🔔 **Subscriptions** | `Nnwdaf_EventsSubscription` create/list/get/delete with push notification delivery (background notifier thread) |
 | 🗄️ **Persistence** | SQLite-backed throughput history and subscription store — survives restarts |
 | 🛰️ **NRF Integration** | Registration + heartbeat per TS 29.510 §5.3.2.4 |
-| 🔐 **Security** | TLS/mTLS on SBI (TS 33.501 §13.3), OAuth 2.0 bearer-token validation, per-IP + global token-bucket rate limiting, hardened build flags (`-D_FORTIFY_SOURCE=2`, PIE, RELRO) |
+| 🔐 **Security** | TLS on the SBI with opt-in mutual TLS (`tls_ca_file`), per-IP + global token-bucket rate limiting, hardened build flags (`-D_FORTIFY_SOURCE=2`, PIE, RELRO). OAuth 2.0 access-token validation is **not yet implemented** (roadmap H1.10). Today `oauth_enabled` only checks that a Bearer token is present. |
 | 📈 **Observability** | Prometheus `/metrics`, Grafana dashboard JSON, health/readiness probes |
 | 🖥️ **Web Dashboard** | React + Recharts "NWDAF Intelligence" UI: live throughput, anomaly detection, MOS scores, traffic simulator, subscription management |
 | 🧪 **Tested** | 85 Catch2 test cases: unit, integration, and a mock Open5GS environment |
@@ -105,27 +105,31 @@ flowchart LR
 | `ABNORMAL_BEHAVIOUR` | §6.7.5 | Isolation Forest | ✅ Implemented |
 | `SERVICE_EXPERIENCE` | §6.4 | MOS estimation | ✅ Implemented |
 | `NETWORK_PERFORMANCE` | §6.6 | Weighted composite score | ✅ Implemented |
-| `QoS_SUSTAINABILITY` | §6.9 | Threshold trend analysis | ✅ Implemented |
+| `QOS_SUSTAINABILITY` | §6.9 | Threshold trend analysis | ✅ Implemented |
 | `SM_CONGESTION` | §6.16 | Failure-ratio + NF-load bands | ✅ Implemented |
-| `REDUNDANT_TRANSMISSION` | §6.12 | Rate-stability estimator | ✅ Implemented |
+| `RED_TRANS_EXP` | §6.12 | Rate-stability estimator | ✅ Implemented |
 | `DISPERSION` | §6.10 | Gini / HHI concentration | ✅ Implemented |
 | `DN_PERFORMANCE` | §6.14 | — | ⬜ Planned (needs `Naf_EventExposure`) |
 | `SLICE_LOAD_LEVEL` | §6.3 | — | ⬜ Planned (needs S-NSSAI threading) |
 | `USER_DATA_CONGESTION` | §6.8 | — | ⬜ Planned (needs per-location input) |
 | `WLAN_PERFORMANCE` | §6.11 | — | ⬜ Planned (N3IWF-dependent) |
 
-**Known scope limits.** `SM_CONGESTION`, `REDUNDANT_TRANSMISSION` and
+**Known scope limits.** `SM_CONGESTION`, `RED_TRANS_EXP` and
 `DISPERSION` each report what the current journald/procfs data path can
 actually observe and name the input they cannot yet see in a `note` field —
 per-path GTP-U counters, per-location cell data, and per-slice decomposition
 respectively. See [`docs/ENHANCEMENT_PLAN_5G_6G.md`](docs/ENHANCEMENT_PLAN_5G_6G.md)
 H1.1–H1.3 for the work that lifts those limits.
 
-**Referenced specifications:** TS 23.288 v17.3.0 (architecture) · TS 29.520 v17.7.0 (Nnwdaf services) · TS 29.510 v17.6.0 (NRF) · TS 28.554 v17.4.0 (KPIs) · TS 33.501 (security)
+IDs are spelled as in the Rel-18 `NwdafEvent` enum. The operator API still accepts the legacy spellings `QoS_SUSTAINABILITY` and `REDUNDANT_TRANSMISSION` on input.
+
+**Referenced specifications (Rel-17 baseline of the current implementation):** TS 23.288 v17.3.0 (architecture) · TS 29.520 v17.7.0 (Nnwdaf services) · TS 29.510 v17.6.0 (NRF) · TS 28.554 v17.4.0 (KPIs) · TS 33.501 (security)
+
+**Release 18.** The frozen Rel-18 baseline is [`docs/frozen-standards.md`](docs/frozen-standards.md), and the gap analysis is [`docs/3gpp-rel18-compliance.md`](docs/3gpp-rel18-compliance.md). **No Rel-18 compliance is claimed yet.** The claim "Release 18 compliant for the supported scope" is gated on milestone M1.
 
 ### OpenAPI contract
 
-The SBI is published as an OpenAPI 3.0 document at
+The SBI *as currently served* is published as an OpenAPI 3.0 document at
 [`docs/openapi/nwdaf-analytics-v1.yaml`](docs/openapi/nwdaf-analytics-v1.yaml),
 and served from the running instance at `GET /nwdaf-analytics/v1/openapi` so NF
 consumers can fetch the contract without cloning the repository:
@@ -137,6 +141,10 @@ curl "http://127.0.0.1:7779/nwdaf-analytics/v1/openapi" -o nwdaf-openapi.yaml
 It is not documentation-by-hand: `tests/test_openapi_conformance.cpp` loads it
 and validates live responses from every endpoint against the declared schemas,
 so the spec and the implementation cannot drift apart without CI failing.
+
+This document describes this project's own API. It is validated against
+itself, not against the official 3GPP Rel-18 artifacts. Official-schema
+conformance is roadmap item H1.6 (extended) / H1.7.
 
 ## 🚀 Quick Start
 
@@ -160,7 +168,7 @@ sudo apt-get install -y --no-install-recommends \
 ```bash
 sudo apt-get install -y --no-install-recommends \
     libsystemd-dev \    # journald collection      (NWDAF_USE_SD_JOURNAL=ON)
-    libssl-dev \        # TLS/mTLS on the SBI       (NWDAF_USE_TLS=ON, needs OpenSSL ≥ 3.0)
+    libssl-dev \        # TLS on the SBI            (NWDAF_USE_TLS=ON, needs OpenSSL ≥ 3.0)
     libsqlite3-dev \    # restart-safe persistence  (history_backend=sqlite)
     libmongoc-dev libmongocxx-dev   # subscriber count via MongoDB
 ```
@@ -235,7 +243,7 @@ Base URL: `http://<host>:7779`
 | `GET` | `/nwdaf-analytics/v1/metrics` | Prometheus metrics |
 | `GET` | `/nwdaf-analytics/v1/openapi` | The published OpenAPI 3.0 contract (`application/yaml`) |
 | `GET` | `/nwdaf-analytics/v1/analytics?analyticsId=<ID>` | Fetch analytics (`Nnwdaf_AnalyticsInfo`) |
-| `POST` | `/nnwdaf-analyticsinfo/v1/analytics` | Spec-compliant analytics request (POST body) |
+| `POST` | `/nnwdaf-analyticsinfo/v1/analytics` | Analytics request with a JSON body (DNN / S-NSSAI filters). **Non-standard:** TS 29.520 defines this operation as a `GET` with query parameters (roadmap H1.7). |
 | `POST` | `/nwdaf-analytics/v1/subscriptions` | Create subscription (`Nnwdaf_EventsSubscription`) |
 | `GET` | `/nwdaf-analytics/v1/subscriptions` | List subscriptions |
 | `GET` | `/nwdaf-analytics/v1/subscriptions/{subId}` | Get subscription |
@@ -287,14 +295,14 @@ Everything deployment-specific lives in [`config/nwdaf.yaml`](config/nwdaf.yaml)
 | `history_backend` / `history_db_path` | `sqlite` | Restart-safe history + subscription persistence |
 | `rate_limit_per_ip_rps` / `rate_limit_global_rps` | `10` / `100` | Token-bucket SBI rate limits (`0` = off) |
 | `network_performance_weights` | `0.6/0.2/0.2` | NF-health / DL / PDU weights (validated to sum to 1.0) |
-| `tls_enabled` + cert/key/CA paths | `false` | TLS; setting `tls_ca_file` enables mTLS client verification |
+| `tls_enabled` + cert/key/CA paths | `false` | TLS on the SBI. Setting `tls_ca_file` enables mutual TLS: clients must present a certificate signed by that CA, and an unreadable CA stops startup. The NRF client verifies the NRF against the same CA, or against the system trust store if none is set. |
 
 ### Build options
 
 | CMake option | Default | Description |
 |---|---|---|
 | `NWDAF_USE_SD_JOURNAL` | `ON` | journald collection via libsystemd |
-| `NWDAF_USE_TLS` | `ON` | TLS/mTLS on SBI (OpenSSL) |
+| `NWDAF_USE_TLS` | `ON` | TLS on SBI (OpenSSL) |
 | `NWDAF_ENABLE_PUSH_DELIVERY` | `ON` | Subscription push-notification thread |
 | `NWDAF_BUILD_TESTS` | `ON` | Catch2 unit + integration tests |
 
@@ -331,7 +339,7 @@ cd build && ctest --output-on-failure
 |---|---|
 | `test_collector` | Data collection, parsing, interface stats |
 | `test_analytics` | The original 7 analytics IDs, ML outputs, edge cases |
-| `test_h1_analytics` | E-model MOS calibration and the `SM_CONGESTION` / `REDUNDANT_TRANSMISSION` / `DISPERSION` analytics |
+| `test_h1_analytics` | E-model MOS calibration and the `SM_CONGESTION` / `RED_TRANS_EXP` / `DISPERSION` analytics |
 | `test_server_integration` | SBI endpoints, subscriptions, auth, rate limiting |
 | `test_arch_improvements` | Persistence, TLS config, weights validation |
 | `test_openapi_conformance` | Every endpoint validated against the published OpenAPI schemas |
@@ -343,9 +351,14 @@ and the [5G/6G enhancement plan project board](https://github.com/users/cem8kaya
 
 **Horizon 1 — Rel-17/18 completeness & data-path realism** ([#20](https://github.com/cem8kaya/open5gs-nwdaf/issues/20))
 
-- [x] `DISPERSION`, `SM_CONGESTION`, `REDUNDANT_TRANSMISSION` analytics ([#26](https://github.com/cem8kaya/open5gs-nwdaf/issues/26), partial)
+- [x] `DISPERSION`, `SM_CONGESTION`, `RED_TRANS_EXP` analytics ([#26](https://github.com/cem8kaya/open5gs-nwdaf/issues/26), partial)
 - [x] MOS / service-experience E-model upgrade ([#27](https://github.com/cem8kaya/open5gs-nwdaf/issues/27))
 - [x] OpenAPI 3.0 spec published + CI conformance test ([#28](https://github.com/cem8kaya/open5gs-nwdaf/issues/28))
+- [ ] H1.7 — 3GPP Nnwdaf SBI conformance (Rel-18 resources, data types, failure semantics, supported features)
+- [ ] H1.8 — HTTP/2 SBI transport + compliance profile
+- [ ] H1.9 — Truthful Rel-18 NRF profile, lifecycle and discovery
+- [ ] H1.10 — SBI security: mTLS, OAuth2 access-token validation, NRF client TLS
+- [ ] **M1 — Rel-18 supported-scope compliance gate.** See [`docs/3gpp-rel18-compliance.md`](docs/3gpp-rel18-compliance.md)
 - [ ] Pluggable `IDataSource` ingestion — SBI / OAM backend ([#23](https://github.com/cem8kaya/open5gs-nwdaf/issues/23))
 - [ ] Slice awareness (S-NSSAI) + `SLICE_LOAD_LEVEL` (TS 23.288 §6.3) ([#24](https://github.com/cem8kaya/open5gs-nwdaf/issues/24))
 - [ ] PFCP usage reporting → per-UE / per-session analytics ([#25](https://github.com/cem8kaya/open5gs-nwdaf/issues/25))

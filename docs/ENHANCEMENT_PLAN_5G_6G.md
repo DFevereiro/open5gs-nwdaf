@@ -35,19 +35,49 @@ Last updated **2026-08-23** (release `v1.1.0`).
 
 | Item | Issue | Status |
 |---|---|---|
-| H1.1 — Pluggable `IDataSource` ingestion | [#23](https://github.com/cem8kaya/open5gs-nwdaf/issues/23) | Not started |
-| H1.2 — Slice awareness + `SLICE_LOAD_LEVEL` | [#24](https://github.com/cem8kaya/open5gs-nwdaf/issues/24) | Not started |
+| H1.1 — Pluggable `IDataSource` ingestion | [#23](https://github.com/cem8kaya/open5gs-nwdaf/issues/23) | Not started · *adjusted for Rel-18 (§3a)* |
+| H1.2 — Slice awareness + `SLICE_LOAD_LEVEL` | [#24](https://github.com/cem8kaya/open5gs-nwdaf/issues/24) | Not started · *adjusted for Rel-18 (§3a)* |
 | H1.3 — PFCP usage reporting | [#25](https://github.com/cem8kaya/open5gs-nwdaf/issues/25) | Not started |
-| H1.4 — Rel-17/18 catalogue | [#26](https://github.com/cem8kaya/open5gs-nwdaf/issues/26) | **Partial** — `SM_CONGESTION`, `REDUNDANT_TRANSMISSION`, `DISPERSION` shipped; `DN_PERFORMANCE`, `USER_DATA_CONGESTION`, `WLAN_PERFORMANCE` blocked on H1.1–H1.3 |
+| H1.4 — Rel-17/18 catalogue | [#26](https://github.com/cem8kaya/open5gs-nwdaf/issues/26) | **Partial**: `SM_CONGESTION`, `REDUNDANT_TRANSMISSION` (Rel-18 name `RED_TRANS_EXP`) and `DISPERSION` shipped; `DN_PERFORMANCE`, `USER_DATA_CONGESTION` and `WLAN_PERFORMANCE` are blocked on H1.1–H1.3 · *adjusted for Rel-18 (§3a)* |
 | H1.5 — MOS / service-experience E-model | [#27](https://github.com/cem8kaya/open5gs-nwdaf/issues/27) | **Done** |
-| H1.6 — OpenAPI 3.0 + conformance in CI | [#28](https://github.com/cem8kaya/open5gs-nwdaf/issues/28) | **Done** |
+| H1.6 — OpenAPI 3.0 + conformance in CI | [#28](https://github.com/cem8kaya/open5gs-nwdaf/issues/28) | **Done** for the operator API · *extended for Rel-18: official-schema conformance (§3a)* |
+| H1.7 — 3GPP Nnwdaf SBI conformance (Rel-18) | — | Not started |
+| H1.8 — HTTP/2 SBI transport + compliance profile | — | Not started |
+| H1.9 — Truthful Rel-18 NRF profile, lifecycle, discovery | — | Not started |
+| H1.10 — SBI security: mTLS, OAuth2 token validation, NRF client TLS | — | Not started |
+| **M1 — Rel-18 supported-scope compliance gate** | — | **Open**. Criteria are in [`3gpp-rel18-compliance.md`](3gpp-rel18-compliance.md#m1--rel-18-supported-scope-compliance-gate) |
 | H2.x — MLOps platform | [#29](https://github.com/cem8kaya/open5gs-nwdaf/issues/29)–[#35](https://github.com/cem8kaya/open5gs-nwdaf/issues/35) | Not started |
 | H3.x — 6G readiness | [#36](https://github.com/cem8kaya/open5gs-nwdaf/issues/36)–[#41](https://github.com/cem8kaya/open5gs-nwdaf/issues/41) | Not started |
 
-**Against the H1 exit criteria:** analytics IDs 7 → **10** (target ≥11);
-OpenAPI-validated SBI ✅; slice-aware ✗; per-UE PFCP series ✗; SBI-mode
-ingestion ✗. H1.2 and H1.3 are the remaining blockers, and are the plan's own
-#1 and #2 backlog items.
+**Against the H1 exit criteria:**
+
+| Criterion | Status |
+|---|---|
+| Analytics IDs | 7 → **10** (target ≥11) |
+| OpenAPI-validated SBI | ✅ (operator API) |
+| Slice-aware | ✗ |
+| Per-UE PFCP series | ✗ |
+| SBI-mode ingestion | ✗ |
+| Rel-18 supported-scope gate (M1) | ✗ |
+
+H1.2 and H1.3 are the plan's own #1 and #2 backlog items. **M1 is sequenced
+before them** (see §3a).
+
+**Rel-18 compliance update (2026-09-28).** A Rel-17 → Rel-18 gap analysis was
+run against the frozen baseline in [`frozen-standards.md`](frozen-standards.md).
+Its results are tracked in [`3gpp-rel18-compliance.md`](3gpp-rel18-compliance.md).
+
+It found that the SBI claimed as "TS 29.520-aligned" is a custom API:
+- **Paths and methods:** the analytics operation is a `POST`, where the spec
+  defines a `GET`; the subscription resource is on a non-3GPP path.
+- **Bodies:** custom request, response and notification bodies instead of the
+  TS 29.520 data types.
+- **Transport:** HTTP/1.1, where TS 29.500 requires HTTP/2.
+- **Security:** mTLS and OAuth2 token validation are not wired up.
+
+This work was **missing from the roadmap**. It is added as H1.7–H1.10, closed by
+milestone M1. Existing items are adjusted, not replaced (§3a). Items in H2 and H3
+that relate to Rel-18 but are optional stay where they are and come after M1.
 
 **Correction applied 2026-08-23:** the H1.4 table below originally paired the
 `SM_CONGESTION` analytics ID with §6.8. These are two distinct 3GPP analytics —
@@ -134,7 +164,89 @@ Replace the static DL-throughput ladder in `serviceExperience()` with an **ITU-T
 ### H1.6 — OpenAPI 3.0 + conformance **[TE]** — ✅ delivered in v1.1.0
 Publish the SBI from the TS 29.520 YAML (already on the roadmap) and add a **contract test** in CI that validates responses against the schema. This is the cheapest credibility win for external NF consumers.
 
-**H1 exit criteria:** slice-aware analytics live; per-UE series from PFCP; ≥11 analytics IDs; OpenAPI-validated SBI; SBI-mode ingestion optional.
+### 3a. Rel-18 compliance items (added 2026-09-28)
+
+These items come from the Rel-18 gap analysis in
+[`3gpp-rel18-compliance.md`](3gpp-rel18-compliance.md), measured against the
+frozen baseline in [`frozen-standards.md`](frozen-standards.md). The target claim
+is **"Release 18 compliant for the supported scope"**. It may be made only when
+M1 passes.
+
+**Adjustments to existing items:**
+
+- **H1.1:** name the Rel-18 input events that each blocked analytics ID needs.
+  For example, `UeMobility.locInfos` needs Namf_EventExposure `LOCATION_REPORT`.
+  Landing H1.1 moves `UE_MOBILITY` into the advertised set.
+- **H1.2:** align with the Rel-18 `SliceLoadLevelInformation` data type, the
+  `AnalyticsSubset` values (`NUM_OF_UE_REG`, `NUM_OF_PDU_SESS_ESTBL`,
+  `RES_USAGE`, …) and the `EventFilter.snssais` / `anySlice` filters.
+- **H1.4:**
+  - Correct the ID spellings to the Rel-18 `NwdafEvent` enum:
+    `QOS_SUSTAINABILITY` (not `QoS_SUSTAINABILITY`) and `RED_TRANS_EXP` (not
+    `REDUNDANT_TRANSMISSION`). The legacy spellings stay accepted as input
+    aliases on the operator API only.
+  - Re-verify the TS 23.288 clause numbers against V18.13.0.
+  - Add the six new Rel-18 IDs (`PDU_SESSION_TRAFFIC`, `E2E_DATA_VOL_TRANS_TIME`,
+    `MOVEMENT_BEHAVIOUR`, `LOC_ACCURACY`, `RELATIVE_PROXIMITY`,
+    `PFD_DETERMINATION`) as optional.
+  - Mark `NSI_LOAD_LEVEL` out of scope.
+- **H1.6:** validate the 3GPP-facing endpoints against the **official** Rel-18
+  OpenAPI artifacts at the pinned commit, not only against this repository's own
+  document.
+
+**New items:**
+
+- **H1.7 — 3GPP Nnwdaf SBI conformance.** Serve the specification's
+  `Nnwdaf_AnalyticsInfo` (`GET /nnwdaf-analyticsinfo/v1/analytics`) and
+  `Nnwdaf_EventsSubscription` (`/nnwdaf-eventssubscription/v1/subscriptions`:
+  `POST` with `Location`, `PUT`, `DELETE`, and notifications) alongside the
+  unchanged operator API. It also covers:
+  - An explicit analytics-ID catalogue. The advertised set is a subset of the
+    implemented set, which is a subset of the known Rel-18 enum.
+    Advertisement depends on implemented and configured capability, never on
+    transient data availability.
+  - A 3GPP output adapter for each advertised ID.
+  - Request validation that checks the official schema first, then the
+    specification prose, then what this NWDAF implements. There is no custom
+    whitelist stricter than Rel-18.
+  - Operation-specific failure semantics: `204` or `ProblemDetails` for
+    AnalyticsInfo, `failEventReports` for subscriptions, `failNotifyCode` for
+    notifications.
+  - Real `supportedFeatures` negotiation.
+  - `ProblemDetails` with application causes.
+  - The `3gpp-Sbi-Callback` header.
+- **H1.8 — HTTP/2 SBI transport and compliance profile.** An nghttp2 server and
+  a libcurl HTTP/2 client behind `NWDAF_USE_HTTP2`. Building with HTTP/2 gives
+  the `rel18-sbi` profile, which is eligible for the claim. Building without it
+  gives the `dev-legacy` profile, which is explicitly transport non-compliant.
+  The main CI conformance jobs run over HTTP/2.
+- **H1.9 — Truthful Rel-18 NRF profile, lifecycle and discovery.**
+  - Use `nfServiceList` and advertise both services.
+  - Derive `scheme` from the TLS setting.
+  - Populate `nwdafInfo` only with capabilities that are actually supported.
+  - Deregister on shutdown, and re-register when a heartbeat gets 404.
+  - Send an explicit NFUpdate when a genuine capability change alters the
+    advertised set.
+  - Use `Nnrf_NFDiscovery` for NF instance IDs.
+- **H1.10 — SBI security.**
+  - Wire up mTLS.
+  - Validate OAuth2 access tokens per TS 33.501 and TS 29.510. The standards
+    logic is kept separate from the deployment mechanism: the initial Open5GS
+    key source is a configured NRF public-key file.
+  - Verify the server certificate in the NRF client.
+
+**M1 — Rel-18 supported-scope compliance gate.** M1 closes H1.7–H1.10 together
+with the adjusted H1.4 and H1.6. Optional work waits until M1 passes: H1.2
+`SLICE_LOAD_LEVEL`, moving IDs into the advertised set through H1.1 and H1.3,
+threshold notifications, and the H2 and H3 items.
+
+**H1 exit criteria:**
+- Slice-aware analytics live.
+- Per-UE series from PFCP.
+- ≥11 analytics IDs.
+- OpenAPI-validated SBI.
+- SBI-mode ingestion optional.
+- **M1 passed.**
 
 ---
 
