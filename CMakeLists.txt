@@ -61,6 +61,9 @@ if(NOT spdlog_FOUND)
     message(STATUS "spdlog fetched via FetchContent")
 endif()
 
+# H1.7: official 3GPP Rel-18 OpenAPI artifacts (pinned + hash-verified)
+include(${CMAKE_SOURCE_DIR}/cmake/Nwdaf3gppOpenApi.cmake)
+
 # libsystemd
 if(NWDAF_USE_SD_JOURNAL)
     pkg_check_modules(SYSTEMD REQUIRED libsystemd)
@@ -102,6 +105,9 @@ endif()
 set(NWDAF_LIB_SOURCES
     src/nwdaf_config.cpp
     src/nwdaf_analytics_catalogue.cpp
+    src/nwdaf_schema_validator.cpp
+    src/nwdaf_supported_features.cpp
+    src/nwdaf_sbi.cpp
     src/nwdaf_collector.cpp
     src/nwdaf_analytics.cpp
     src/nwdaf_server.cpp
@@ -157,6 +163,9 @@ install(FILES config/nwdaf.yaml DESTINATION /etc/open5gs)
 # H1.6: install the OpenAPI document where the SBI's default
 # openapi_spec_path expects it, so GET /openapi works out of the box.
 install(FILES docs/openapi/nwdaf-analytics-v1.yaml DESTINATION /etc/open5gs/openapi)
+# H1.7: the pinned official 3GPP artifacts the runtime request validator uses
+# (openapi_3gpp_dir); see docs/frozen-standards.md.
+install(DIRECTORY ${NWDAF_3GPP_OPENAPI_DIR}/ DESTINATION /etc/open5gs/openapi/3gpp)
 install(FILES systemd/open5gs-nwdafd.service DESTINATION /etc/systemd/system)
 
 # ── Tests ──────────────────────────────────────────────────────────────────────

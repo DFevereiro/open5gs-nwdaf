@@ -25,6 +25,8 @@ add_executable(nwdaf_tests
     test_arch_improvements.cpp   # TIER-4 ARCH-01…ARCH-05 tests
     test_h1_analytics.cpp        # H1.4 catalogue + H1.5 E-model MOS
     test_analytics_catalogue.cpp # H1.7 known/operator/implemented/advertised IDs
+    test_schema_validator.cpp    # H1.7 OpenAPI validator against the official artifacts
+    test_supported_features.cpp  # H1.7 TS 29.571 SupportedFeatures + negotiation
 )
 target_include_directories(nwdaf_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -35,6 +37,9 @@ target_link_libraries(nwdaf_tests PRIVATE
     nwdaf_lib
     Catch2::Catch2WithMain
 )
+target_compile_definitions(nwdaf_tests PRIVATE
+    NWDAF_3GPP_OPENAPI_DIR="${NWDAF_3GPP_OPENAPI_DIR}"
+)
 
 # Integration tests bind to port 17779 and must not run in parallel with each
 # other.  RESOURCE_LOCK ensures CTest serialises every test in this target.
@@ -42,6 +47,7 @@ add_executable(nwdaf_integration_tests
     test_server_integration.cpp
     test_openapi_conformance.cpp   # H1.6 OpenAPI contract test
     test_sbi_security.cpp          # H1.10 mTLS (compiled to no tests without NWDAF_USE_TLS)
+    test_3gpp_sbi.cpp              # H1.7 3GPP Nnwdaf_AnalyticsInfo / EventsSubscription
 )
 target_include_directories(nwdaf_integration_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -57,6 +63,7 @@ target_link_libraries(nwdaf_integration_tests PRIVATE
 target_compile_definitions(nwdaf_integration_tests PRIVATE
     NWDAF_OPENAPI_SPEC="${CMAKE_SOURCE_DIR}/docs/openapi/nwdaf-analytics-v1.yaml"
     NWDAF_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
+    NWDAF_3GPP_OPENAPI_DIR="${NWDAF_3GPP_OPENAPI_DIR}"
 )
 
 include(CTest)

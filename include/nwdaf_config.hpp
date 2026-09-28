@@ -70,4 +70,8 @@ public:
     // Optional — when the file is absent the endpoint reports 404 and the rest
     // of the SBI is unaffected, following the graceful-degradation convention.
     std::string openapi_spec_path = "/etc/open5gs/openapi/nwdaf-analytics-v1.yaml";
+
+    // H1.7: directory of the official 3GPP Rel-18 OpenAPI artifacts pinned in
+    // docs/frozen-standards.md, used to validate 3GPP-interface requests.
+    std::string openapi_3gpp_dir = "/etc/open5gs/openapi/3gpp";
 };

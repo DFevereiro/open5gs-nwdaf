@@ -44,6 +44,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=builder /src/build/open5gs-nwdafd /usr/local/bin/open5gs-nwdafd
 COPY config/nwdaf.yaml /etc/open5gs/nwdaf.yaml
+# H1.6 / H1.7: the operator-API contract served at /nwdaf-analytics/v1/openapi,
+# and the pinned official 3GPP Rel-18 artifacts the 3GPP interfaces validate
+# requests against (fetched and hash-verified at configure time).
+COPY docs/openapi/nwdaf-analytics-v1.yaml /etc/open5gs/openapi/nwdaf-analytics-v1.yaml
+COPY --from=builder /src/build/3gpp-openapi /etc/open5gs/openapi/3gpp
 
 # Provide an entrypoint
 CMD ["/usr/local/bin/open5gs-nwdafd", "-c", "/etc/open5gs/nwdaf.yaml"]

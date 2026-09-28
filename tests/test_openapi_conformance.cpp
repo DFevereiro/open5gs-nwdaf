@@ -14,11 +14,14 @@
 #include "nwdaf_server.hpp"
 #include "nwdaf_analytics.hpp"
 #include "nwdaf_analytics_catalogue.hpp"
+#include "nwdaf_schema_validator.hpp"
 #include "nwdaf_subscription.hpp"
 #include "mock_open5gs.hpp"
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 #include <yaml-cpp/yaml.h>
+#include <filesystem>
+#include <fstream>
 #include <thread>
 #include <chrono>
 #include <memory>
@@ -32,139 +35,25 @@
 
 static const int CONF_PORT = 17780;
 
-// ── Minimal JSON Schema validator over yaml-cpp ──────────────────────────────
+// ── The operator-API contract, checked with the library validator ─────────────
+//
+// H1.7: the same NwdafSchemaValidator that validates 3GPP-interface requests
+// against the official artifacts. `yaml` is kept for read-only structural
+// checks of the document (enums, the analytics-schema mapping).
 
-class SchemaValidator {
-public:
-    explicit SchemaValidator(YAML::Node root) : root_(std::move(root)) {}
+struct OperatorSpec {
+    NwdafSchemaValidator validator;
+    YAML::Node           yaml;
+    std::string          file;
 
-    std::vector<std::string> validate(const json& doc, const YAML::Node& schema,
-                                      const std::string& path = "$") const {
-        std::vector<std::string> errs;
-        check(doc, resolve(schema), path, errs);
-        return errs;
-    }
+    explicit OperatorSpec(const std::string& path)
+        : validator(std::filesystem::path(path).parent_path().string()),
+          yaml(YAML::LoadFile(path)),
+          file(std::filesystem::path(path).filename().string()) {}
 
-    YAML::Node schemaByRef(const std::string& ref) const { return deref(ref); }
-    YAML::Node root() const { return root_; }
-
-private:
-    YAML::Node root_;
-
-    // "#/components/schemas/Foo" → the node at that JSON pointer.
-    //
-    // NOTE: yaml-cpp's Node::operator= assigns *content* into the referenced
-    // node rather than rebinding the handle, so walking a path with
-    // `cur = cur[seg]` silently mutates the loaded document. reset() is the
-    // rebinding operation and is what this walk must use.
-    YAML::Node deref(const std::string& ref) const {
-        YAML::Node cur = root_;
-        std::istringstream ss(ref.substr(ref.find('/') + 1));
-        std::string seg;
-        while (std::getline(ss, seg, '/')) {
-            if (seg.empty() || seg == "#") continue;
-            const YAML::Node child = cur[seg];
-            if (!child) return YAML::Node(YAML::NodeType::Undefined);
-            cur.reset(child);
-        }
-        return cur;
-    }
-
-    YAML::Node resolve(const YAML::Node& schema) const {
-        if (schema && schema.IsMap() && schema["$ref"])
-            return deref(schema["$ref"].as<std::string>());
-        return schema;
-    }
-
-    static std::string typeName(const json& v) {
-        if (v.is_object())  return "object";
-        if (v.is_array())   return "array";
-        if (v.is_string())  return "string";
-        if (v.is_boolean()) return "boolean";
-        if (v.is_number_integer() || v.is_number_unsigned()) return "integer";
-        if (v.is_number())  return "number";
-        if (v.is_null())    return "null";
-        return "unknown";
-    }
-
-    void check(const json& doc, const YAML::Node& schema,
-               const std::string& path, std::vector<std::string>& errs) const {
-        if (!schema || !schema.IsMap()) return;
-
-        if (schema["type"]) {
-            const std::string want = schema["type"].as<std::string>();
-            const std::string got  = typeName(doc);
-            bool ok = (want == got)
-                   // JSON has one numeric type; an integer is a valid number.
-                   || (want == "number" && got == "integer");
-            if (!ok) {
-                errs.push_back(path + ": expected type " + want + ", got " + got);
-                return;  // further checks would be meaningless
-            }
-        }
-
-        const YAML::Node enum_node = schema["enum"];
-        if (enum_node && enum_node.IsSequence() && doc.is_string()) {
-            const std::string v = doc.get<std::string>();
-            bool found = false;
-            for (const auto& e : enum_node)
-                if (e.as<std::string>() == v) { found = true; break; }
-            if (!found) errs.push_back(path + ": value '" + v + "' is not in the declared enum");
-        }
-
-        if (doc.is_number()) {
-            const double v = doc.get<double>();
-            if (schema["minimum"] && v < schema["minimum"].as<double>())
-                errs.push_back(path + ": " + std::to_string(v) + " is below the declared minimum");
-            if (schema["maximum"] && v > schema["maximum"].as<double>())
-                errs.push_back(path + ": " + std::to_string(v) + " is above the declared maximum");
-        }
-
-        if (doc.is_object()) {
-            if (schema["required"]) {
-                for (const auto& r : schema["required"]) {
-                    const std::string key = r.as<std::string>();
-                    if (!doc.contains(key))
-                        errs.push_back(path + ": missing required property '" + key + "'");
-                }
-            }
-            if (schema["properties"]) {
-                const YAML::Node props = schema["properties"];
-                for (auto it = props.begin(); it != props.end(); ++it) {
-                    const std::string key = it->first.as<std::string>();
-                    if (doc.contains(key))
-                        check(doc.at(key), resolve(it->second), path + "." + key, errs);
-                }
-            }
-        }
-
-        // oneOf — used where an analytics payload has two legitimate shapes
-        // (a populated result, or a short "insufficient data" form). Valid if
-        // any branch validates; otherwise report every branch's failures so
-        // the diagnostic says why each one was rejected.
-        const YAML::Node one_of = schema["oneOf"];
-        if (one_of && one_of.IsSequence()) {
-            std::vector<std::string> branch_errs;
-            bool any_ok = false;
-            int branch = 0;
-            for (const auto& sub : one_of) {
-                std::vector<std::string> sub_errs;
-                check(doc, resolve(sub), path, sub_errs);
-                if (sub_errs.empty()) { any_ok = true; break; }
-                for (const auto& e : sub_errs)
-                    branch_errs.push_back("[oneOf branch " + std::to_string(branch) + "] " + e);
-                ++branch;
-            }
-            if (!any_ok)
-                errs.insert(errs.end(), branch_errs.begin(), branch_errs.end());
-        }
-
-        if (doc.is_array() && schema["items"]) {
-            const YAML::Node items = resolve(schema["items"]);
-            for (size_t i = 0; i < doc.size(); ++i)
-                check(doc[i], items, path + "[" + std::to_string(i) + "]", errs);
-        }
-    }
+    // "#/components/schemas/X" within this document → a validator ref.
+    std::string ref(const std::string& local) const { return file + local; }
+    YAML::Node root() const { return yaml; }
 };
 
 // ── Fixture ──────────────────────────────────────────────────────────────────
@@ -200,14 +89,14 @@ struct ConformanceFixture {
     NwdafSubscriptionStore subs;
     NwdafServer            server;
     std::thread            server_thread;
-    SchemaValidator        spec;
+    OperatorSpec           spec;
 
     ConformanceFixture()
         : cfg(confConfig()),
           collector(cfg),
           engine(collector, cfg),
           server(engine, subs, cfg),
-          spec(YAML::LoadFile(NWDAF_OPENAPI_SPEC))
+          spec(NWDAF_OPENAPI_SPEC)
     {
         // Seed a realistic window so analytics return populated payloads
         // rather than only their INSUFFICIENT_DATA branch.
@@ -260,13 +149,13 @@ static ConformanceFixture& fixture() {
     return *g_conf;
 }
 
-static void requireValid(const SchemaValidator& v, const json& doc,
-                         const YAML::Node& schema, const std::string& what) {
-    auto errs = v.validate(doc, schema);
+static void requireValid(const OperatorSpec& spec, const json& doc,
+                         const std::string& local_ref, const std::string& what) {
+    auto errs = spec.validator.validate(doc, spec.ref(local_ref));
     if (!errs.empty()) {
         std::ostringstream oss;
         oss << what << " violates the OpenAPI contract:";
-        for (const auto& e : errs) oss << "\n  - " << e;
+        for (const auto& e : errs) oss << "\n  - " << (e.pointer.empty() ? "/" : e.pointer) << ": " << e.reason;
         oss << "\nPayload: " << doc.dump(2);
         FAIL(oss.str());
     }
@@ -279,8 +168,17 @@ static void requireValid(const SchemaValidator& v, const json& doc,
 // validator actually fails on each violation class it claims to police, so a
 // future refactor cannot quietly turn it into a rubber stamp.
 
+// Writes a schema document to a scratch directory and returns a validator
+// rooted there, so the self-tests exercise the real library code path.
+static std::unique_ptr<NwdafSchemaValidator> inlineSpec(const std::string& yaml) {
+    const auto dir = std::filesystem::temp_directory_path() / "nwdaf_schema_selftest";
+    std::filesystem::create_directories(dir);
+    std::ofstream(dir / "self.yaml") << yaml;
+    return std::make_unique<NwdafSchemaValidator>(dir.string());
+}
+
 TEST_CASE("H1.6: the schema validator rejects each violation class") {
-    const YAML::Node schema = YAML::Load(R"(
+    auto v = inlineSpec(R"(
 type: object
 required: [id, level, score, items]
 properties:
@@ -296,67 +194,62 @@ properties:
       properties:
         name: { type: string }
 )");
-    SchemaValidator v{YAML::Node(YAML::NodeType::Map)};
+    const std::string schema = "self.yaml#";
 
     const json good = {{"id", "a"}, {"level", "LOW"}, {"score", 50},
                        {"items", json::array({{{"name", "x"}}})}};
-    REQUIRE(v.validate(good, schema).empty());
+    REQUIRE(v->validate(good, schema).empty());
 
     SECTION("missing required property") {
         json bad = good; bad.erase("level");
-        REQUIRE_FALSE(v.validate(bad, schema).empty());
+        REQUIRE_FALSE(v->validate(bad, schema).empty());
     }
     SECTION("value outside the declared enum") {
         json bad = good; bad["level"] = "MEDIUM";
-        REQUIRE_FALSE(v.validate(bad, schema).empty());
+        REQUIRE_FALSE(v->validate(bad, schema).empty());
     }
     SECTION("number above the declared maximum") {
         json bad = good; bad["score"] = 101;
-        REQUIRE_FALSE(v.validate(bad, schema).empty());
+        REQUIRE_FALSE(v->validate(bad, schema).empty());
     }
     SECTION("number below the declared minimum") {
         json bad = good; bad["score"] = -1;
-        REQUIRE_FALSE(v.validate(bad, schema).empty());
+        REQUIRE_FALSE(v->validate(bad, schema).empty());
     }
     SECTION("wrong scalar type") {
         json bad = good; bad["id"] = 7;
-        REQUIRE_FALSE(v.validate(bad, schema).empty());
+        REQUIRE_FALSE(v->validate(bad, schema).empty());
     }
     SECTION("a non-integer where an integer is declared") {
         json bad = good; bad["count"] = 1.5;
-        REQUIRE_FALSE(v.validate(bad, schema).empty());
+        REQUIRE_FALSE(v->validate(bad, schema).empty());
     }
     SECTION("violation nested inside an array item") {
         json bad = good; bad["items"] = json::array({{{"nome", "typo"}}});
-        REQUIRE_FALSE(v.validate(bad, schema).empty());
+        REQUIRE_FALSE(v->validate(bad, schema).empty());
     }
     SECTION("an integer satisfies a number-typed field") {
         json ok = good; ok["score"] = 42;   // not 42.0
-        REQUIRE(v.validate(ok, schema).empty());
+        REQUIRE(v->validate(ok, schema).empty());
     }
 }
 
-TEST_CASE("H1.6: the validator resolves $ref without mutating the document") {
-    // yaml-cpp's operator= assigns content rather than rebinding, so a naive
-    // pointer walk corrupts the loaded spec. Resolving the same ref twice must
-    // yield the same node, and must leave neighbouring nodes untouched.
-    const YAML::Node root = YAML::Load(R"(
+TEST_CASE("H1.6: the validator resolves $ref repeatably and reports a missing target") {
+    auto v = inlineSpec(R"(
 components:
   schemas:
     First:  { type: object, required: [a] }
     Second: { type: object, required: [b] }
 )");
-    SchemaValidator v{root};
     for (int i = 0; i < 3; ++i) {
-        REQUIRE(v.schemaByRef("#/components/schemas/First")["required"][0].as<std::string>()  == "a");
-        REQUIRE(v.schemaByRef("#/components/schemas/Second")["required"][0].as<std::string>() == "b");
+        REQUIRE(v->schema("self.yaml#/components/schemas/First")["required"][0]  == "a");
+        REQUIRE(v->schema("self.yaml#/components/schemas/Second")["required"][0] == "b");
     }
-    REQUIRE(root["components"]["schemas"].size() == 2);
-    REQUIRE_FALSE(v.schemaByRef("#/components/schemas/Missing").IsMap());
+    REQUIRE_THROWS(v->schema("self.yaml#/components/schemas/Missing"));
 }
 
-TEST_CASE("H1.6: oneOf accepts any valid branch and rejects a document matching none") {
-    const YAML::Node root = YAML::Load(R"(
+TEST_CASE("H1.6: oneOf accepts exactly one valid branch and rejects a document matching none") {
+    auto v = inlineSpec(R"(
 components:
   schemas:
     Full:
@@ -372,16 +265,17 @@ components:
         - $ref: '#/components/schemas/Full'
         - $ref: '#/components/schemas/Declined'
 )");
-    SchemaValidator v{root};
-    const YAML::Node either = v.schemaByRef("#/components/schemas/Either");
+    const std::string either = "self.yaml#/components/schemas/Either";
 
-    REQUIRE(v.validate(json{{"value", 1.5}}, either).empty());
-    REQUIRE(v.validate(json{{"reason", "INSUFFICIENT_DATA"}}, either).empty());
+    REQUIRE(v->validate(json{{"value", 1.5}}, either).empty());
+    REQUIRE(v->validate(json{{"reason", "INSUFFICIENT_DATA"}}, either).empty());
 
-    auto errs = v.validate(json{{"unrelated", true}}, either);
-    REQUIRE_FALSE(errs.empty());
-    // The diagnostic must say why every branch was rejected, not just the last.
-    REQUIRE(errs.size() >= 2);
+    auto errs = v->validate(json{{"unrelated", true}}, either);
+    REQUIRE(errs.size() == 1);
+    REQUIRE(errs.front().reason.find("none of the oneOf") != std::string::npos);
+
+    // Matching both branches is not "one of".
+    REQUIRE_FALSE(v->validate(json{{"value", 1.0}, {"reason", "x"}}, either).empty());
 }
 
 // ── The spec itself ──────────────────────────────────────────────────────────
@@ -405,7 +299,7 @@ TEST_CASE("H1.6: the OpenAPI document is well-formed and complete") {
         REQUIRE(std::find(enum_ids.begin(), enum_ids.end(), id) != enum_ids.end());
         REQUIRE(mapping[id]);
         // ...and the schema it names must actually exist.
-        REQUIRE(f.spec.schemaByRef(mapping[id].as<std::string>()).IsMap());
+        REQUIRE(f.spec.validator.schema(f.spec.ref(mapping[id].as<std::string>())).is_object());
     }
     // No stale entries either: the enum must not advertise IDs the engine
     // does not serve.
@@ -420,7 +314,7 @@ TEST_CASE("H1.6: GET /analytics conforms for every analytics ID") {
     cli.set_connection_timeout(5);
     cli.set_read_timeout(5);
 
-    YAML::Node envelope = f.spec.schemaByRef("#/components/schemas/AnalyticsResponse");
+    const std::string envelope = "#/components/schemas/AnalyticsResponse";
     YAML::Node mapping  = f.spec.root()["x-analyticsDataSchemas"];
 
     for (const auto& id : NwdafAnalyticsCatalogue::OPERATOR_IDS) {
@@ -432,7 +326,7 @@ TEST_CASE("H1.6: GET /analytics conforms for every analytics ID") {
         json body = json::parse(res->body);
         requireValid(f.spec, body, envelope, "GET /analytics envelope for " + id);
         requireValid(f.spec, body["analData"],
-                     f.spec.schemaByRef(mapping[id].as<std::string>()),
+                     mapping[id].as<std::string>(),
                      "analData for " + id);
         // The envelope's id must match what was asked for.
         REQUIRE(body["analyticsId"] == id);
@@ -445,7 +339,7 @@ TEST_CASE("H1.6: POST /nnwdaf-analyticsinfo conforms for every analytics ID") {
     cli.set_connection_timeout(5);
     cli.set_read_timeout(5);
 
-    YAML::Node envelope = f.spec.schemaByRef("#/components/schemas/AnalyticsResponse");
+    const std::string envelope = "#/components/schemas/AnalyticsResponse";
     YAML::Node mapping  = f.spec.root()["x-analyticsDataSchemas"];
 
     for (const auto& id : NwdafAnalyticsCatalogue::OPERATOR_IDS) {
@@ -461,7 +355,7 @@ TEST_CASE("H1.6: POST /nnwdaf-analyticsinfo conforms for every analytics ID") {
         json body = json::parse(res->body);
         requireValid(f.spec, body, envelope, "POST analytics envelope for " + id);
         requireValid(f.spec, body["analData"],
-                     f.spec.schemaByRef(mapping[id].as<std::string>()),
+                     mapping[id].as<std::string>(),
                      "analData for " + id);
     }
 }
@@ -478,7 +372,7 @@ TEST_CASE("H1.6: /health conforms and advertises the live catalogue") {
 
     json body = json::parse(res->body);
     requireValid(f.spec, body,
-                 f.spec.schemaByRef("#/components/schemas/HealthResponse"),
+                 "#/components/schemas/HealthResponse",
                  "GET /health");
 
     // The advertised list must be exactly what the engine serves.
@@ -497,7 +391,7 @@ TEST_CASE("H1.6: /ready conforms in both states") {
     REQUIRE(res);
     REQUIRE((res->status == 200 || res->status == 503));
     requireValid(f.spec, json::parse(res->body),
-                 f.spec.schemaByRef("#/components/schemas/ReadyResponse"),
+                 "#/components/schemas/ReadyResponse",
                  "GET /ready");
 }
 
@@ -510,7 +404,7 @@ TEST_CASE("H1.6: POST /train conforms") {
     REQUIRE(res);
     REQUIRE(res->status == 200);
     requireValid(f.spec, json::parse(res->body),
-                 f.spec.schemaByRef("#/components/schemas/TrainResponse"),
+                 "#/components/schemas/TrainResponse",
                  "POST /train");
 }
 
@@ -519,7 +413,7 @@ TEST_CASE("H1.6: the subscription lifecycle conforms") {
     httplib::Client cli("127.0.0.1", CONF_PORT);
     cli.set_connection_timeout(5);
 
-    YAML::Node sub_schema = f.spec.schemaByRef("#/components/schemas/Subscription");
+    const std::string sub_schema = "#/components/schemas/Subscription";
 
     json req = {{"analyticsId", "SM_CONGESTION"},
                 {"notifUri", "http://127.0.0.1:9/notify"}};
@@ -610,7 +504,7 @@ TEST_CASE("H1.6: error responses are RFC 7807 problem documents") {
     httplib::Client cli("127.0.0.1", CONF_PORT);
     cli.set_connection_timeout(5);
 
-    YAML::Node problem = f.spec.schemaByRef("#/components/schemas/ProblemDetails");
+    const std::string problem = "#/components/schemas/ProblemDetails";
 
     struct Case { const char* url; int status; const char* what; };
     const Case cases[] = {
@@ -647,7 +541,7 @@ TEST_CASE("H1.6: legacy analyticsId spellings are accepted on the operator API")
         // Normalised to the Rel-18 spelling the spec's enum declares.
         REQUIRE(body["analyticsId"] == canonical);
         requireValid(f.spec, body,
-                     f.spec.schemaByRef("#/components/schemas/AnalyticsResponse"),
+                     "#/components/schemas/AnalyticsResponse",
                      legacy + " alias");
     }
 }

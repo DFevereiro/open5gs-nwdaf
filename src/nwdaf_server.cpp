@@ -9,11 +9,13 @@
 #include <thread>
 #include <chrono>
 #include <cstdlib>
+#include <cctype>
 
 NwdafServer::NwdafServer(NwdafAnalyticsEngine& engine,
                          NwdafSubscriptionStore& subs,
                          const NwdafConfig& config)
     : engine_(engine), subs_(subs), config_(config),
+      sbi_(engine, subs, config),
       rate_limiter_(config.rate_limit_per_ip_rps, config.rate_limit_global_rps)
 {
     // ARCH-05: instantiate SSLServer when TLS is enabled and compiled in,
@@ -119,11 +121,32 @@ void NwdafServer::setupRoutes() {
             handleGetAnalytics(req, res);
         });
 
-    // P1-1: Spec-compliant POST for Nnwdaf_AnalyticsInfo
+    // P1-1 (deprecated, non-standard): JSON-body analytics request. TS 29.520
+    // defines Nnwdaf_AnalyticsInfo as the GET registered below.
     svr_->Post("/nnwdaf-analyticsinfo/v1/analytics",
         [this](const httplib::Request& req, httplib::Response& res) {
             handlePostAnalytics(req, res);
         });
+
+    // H1.7: 3GPP Nnwdaf_AnalyticsInfo and Nnwdaf_EventsSubscription. Every
+    // method is routed so unsupported ones get 405 + Allow (TS 29.500 §5.2.7.2).
+    auto sbi = [this](const httplib::Request& req, httplib::Response& res) {
+        handle3gpp(req, res);
+    };
+    const std::string analytics = std::string(NwdafSbiService::ANALYTICS_INFO_ROOT) + "/analytics";
+    const std::string subs = std::string(NwdafSbiService::EVENTS_SUBSCRIPTION_ROOT) + "/subscriptions";
+    const std::string sub  = subs + "/([^/]+)";
+    svr_->Get(analytics, sbi);
+    svr_->Put(analytics, sbi);
+    svr_->Delete(analytics, sbi);
+    svr_->Patch(analytics, sbi);
+    for (const auto& path : {subs, sub}) {
+        svr_->Get(path, sbi);
+        svr_->Post(path, sbi);
+        svr_->Put(path, sbi);
+        svr_->Delete(path, sbi);
+        svr_->Patch(path, sbi);
+    }
 
     svr_->Post("/nwdaf-analytics/v1/subscriptions",
         [this](const httplib::Request& req, httplib::Response& res) {
@@ -184,6 +207,37 @@ void NwdafServer::setupRoutes() {
         [this](const httplib::Request& req, httplib::Response& res) {
             handleTrafficStatus(req, res);
         });
+}
+
+void NwdafServer::handle3gpp(const httplib::Request& req, httplib::Response& res) {
+    if (!rate_limiter_.allow(req.remote_addr)) {
+        // TS 29.500 Table 5.2.7.2-1: excessive request rate.
+        res.status = 429;
+        res.set_header("Retry-After", "1");
+        res.set_content(json{{"title", "Too Many Requests"}, {"status", 429},
+                             {"cause", "NF_CONGESTION_RISK"},
+                             {"detail", "request rate limit exceeded"}}.dump(),
+                        "application/problem+json");
+        return;
+    }
+    SbiRequest sreq;
+    sreq.method = req.method;
+    sreq.path   = req.path;
+    sreq.query.insert(req.params.begin(), req.params.end());
+    for (const auto& [k, v] : req.headers) {
+        std::string key = k;
+        for (auto& c : key) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        sreq.headers.emplace(key, v);
+    }
+    sreq.body = req.body;
+    const std::string host = req.has_header("Host") ? req.get_header_value("Host")
+        : config_.sbi_bind_address + ":" + std::to_string(config_.sbi_port);
+    sreq.api_root = std::string(config_.tls_enabled ? "https" : "http") + "://" + host;
+
+    SbiResponse out = sbi_.dispatch(sreq);
+    res.status = out.status;
+    for (const auto& [k, v] : out.headers) res.set_header(k, v);
+    if (!out.body.empty()) res.set_content(out.body, out.content_type);
 }
 
 void NwdafServer::start() {

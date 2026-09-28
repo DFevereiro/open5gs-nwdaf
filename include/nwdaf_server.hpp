@@ -3,6 +3,7 @@
 #include "nwdaf_subscription.hpp"
 #include "nwdaf_config.hpp"
 #include "nwdaf_ratelimit.hpp"
+#include "nwdaf_sbi.hpp"
 #include <httplib.h>
 #include <atomic>
 #include <map>
@@ -56,9 +57,15 @@ private:
     void handleTrafficStop(const httplib::Request&, httplib::Response&);
     void handleTrafficStatus(const httplib::Request&, httplib::Response&);
 
+    // H1.7: adapts an httplib request to the transport-agnostic 3GPP service.
+    void handle3gpp(const httplib::Request&, httplib::Response&);
+
     NwdafAnalyticsEngine&   engine_;
     NwdafSubscriptionStore& subs_;
     NwdafConfig             config_;
+
+    // H1.7: 3GPP Nnwdaf_AnalyticsInfo / Nnwdaf_EventsSubscription (TS 29.520)
+    NwdafSbiService         sbi_;
 
     // PROD-06: per-IP + global token-bucket rate limiter
     RateLimiter rate_limiter_;

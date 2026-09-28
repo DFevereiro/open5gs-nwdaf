@@ -115,5 +115,10 @@ NwdafConfig NwdafConfig::load(const std::string& yaml_path) {
         ? n["openapi_spec_path"].as<std::string>()
         : "/etc/open5gs/openapi/nwdaf-analytics-v1.yaml";
 
+    // H1.7: official 3GPP Rel-18 OpenAPI artifacts (docs/frozen-standards.md).
+    cfg.openapi_3gpp_dir = n["openapi_3gpp_dir"]
+        ? n["openapi_3gpp_dir"].as<std::string>()
+        : "/etc/open5gs/openapi/3gpp";
+
     return cfg;
 }
