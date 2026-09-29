@@ -81,7 +81,8 @@ std::vector<NwdafSliceLoad> Nwdaf3gppAdapter::sliceLoads(const NwdafConfig& cfg,
                                                          const std::vector<NwdafOamScrape>& smf,
                                                          std::chrono::system_clock::time_point now) {
     std::vector<NwdafSliceLoad> out;
-    const auto from = query.from.value_or(std::chrono::system_clock::time_point{});
+    // I-9: without an analytics target period, the last slice_load_window_seconds.
+    const auto from = query.from.value_or(now - std::chrono::seconds(cfg.slice_load_window_seconds));
     const auto to   = query.to.value_or(now);
     for (const auto& slice : cfg.slice_capacity) {
         if (!query.any && !query.keys.count(slice.key())) continue;

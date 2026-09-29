@@ -1,0 +1,9 @@
+[Unit]
+Description=Demo: %i UERANSIM UE(s)
+After=ueransim-gnb.service demo-subscribers.service
+Requires=ueransim-gnb.service
+
+[Service]
+ExecStart=/usr/local/bin/nr-ue -c /etc/ueransim/ue.yaml -n %i
+Restart=on-failure
+RestartSec=3

@@ -57,7 +57,7 @@ public:
     struct SliceQuery {
         bool any = false;                   // anySlice
         std::set<std::string> keys;         // requested S-NSSAIs, as NwdafSliceCapacity::key()
-        std::optional<std::chrono::system_clock::time_point> from, to;   // default: all held samples
+        std::optional<std::chrono::system_clock::time_point> from, to;   // default: the last slice_load_window_seconds
     };
 
     // TS 29.571 Snssai ↔ NwdafSliceCapacity::key() ("1-000001", "1").

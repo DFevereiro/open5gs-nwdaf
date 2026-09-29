@@ -1,0 +1,12 @@
+[Unit]
+Description=Demo: provision the UERANSIM test subscribers in MongoDB
+After=mongod.service
+Requires=mongod.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/demo-provision-subscribers
+
+[Install]
+WantedBy=multi-user.target

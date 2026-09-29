@@ -312,3 +312,20 @@ TEST_CASE("H1.2: THRESHOLD slice load subscriptions are not supported yet") {
     REQUIRE(body["failEventReports"] == json::array({{{"event", "SLICE_LOAD_LEVEL"}, {"failureCode", "OTHER"}}}));
     REQUIRE(body["eventSubscriptions"].size() == 1);
 }
+
+TEST_CASE("H1.2: without a target period, statistics cover the last slice_load_window_seconds") {
+    const auto now = Clock::now();
+    NwdafConfig cfg = sliceConfig();
+    cfg.slice_load_window_seconds = 60;
+    // An old scrape (0 PDU sessions) and a recent one (4 of 5): only the recent counts.
+    const std::vector<NwdafOamScrape> smf = {{now - std::chrono::minutes(10), {}},
+                                             {now - std::chrono::seconds(10), {pdus("2", 4)}}};
+    Nwdaf3gppAdapter::SliceQuery q;
+    q.keys = {"2"};
+    const auto loads = Nwdaf3gppAdapter::sliceLoads(cfg, q, {}, smf, now);
+    REQUIRE(loads.size() == 1);
+    REQUIRE(loads[0].load_level == 80);
+    // An explicit start includes the old scrape: (0 + 4) / 2 of 5 = 40.
+    q.from = now - std::chrono::minutes(15);
+    REQUIRE(Nwdaf3gppAdapter::sliceLoads(cfg, q, {}, smf, now)[0].load_level == 40);
+}

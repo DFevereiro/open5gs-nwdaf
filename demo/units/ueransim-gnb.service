@@ -1,0 +1,13 @@
+[Unit]
+Description=Demo: UERANSIM gNB
+After=open5gs-amfd.service open5gs-upfd.service
+Wants=open5gs-amfd.service
+
+[Service]
+ExecStartPre=/bin/sleep 3
+ExecStart=/usr/local/bin/nr-gnb -c /etc/ueransim/gnb.yaml
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

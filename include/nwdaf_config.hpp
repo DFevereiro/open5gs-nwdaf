@@ -56,6 +56,9 @@ public:
     // NSI_LOAD_LEVEL are served and advertised only for configured slices.
     // max_ues needs oam_metrics_endpoints.AMF; max_pdu_sessions needs .SMF.
     std::vector<NwdafSliceCapacity> slice_capacity;
+    // H1.2: period of slice load statistics when the consumer gives no
+    // analytics target period (startTs/endTs): the last N seconds (I-9).
+    int slice_load_window_seconds = 300;
     int    throughput_history_size      = 360;
     int    collection_interval_seconds  = 10;
     int    amf_journal_lines            = 500;

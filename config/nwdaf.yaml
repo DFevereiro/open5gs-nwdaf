@@ -64,6 +64,7 @@ nwdaf:
   #   - snssai: {sst: 1, sd: "000001"}
   #     max_ues: 1000
   #     max_pdu_sessions: 2000
+  # slice_load_window_seconds: 300   # statistics period without startTs/endTs
 
   # AMF journald log parsing — Open5GS v2.7.6 uses "imsi-XXXXXXXXXXXXXXX"
   # Adjust supi_regex for earlier versions if needed

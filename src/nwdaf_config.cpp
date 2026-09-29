@@ -121,6 +121,11 @@ NwdafConfig NwdafConfig::load(const std::string& yaml_path) {
         }
     }
 
+    cfg.slice_load_window_seconds = n["slice_load_window_seconds"]
+        ? n["slice_load_window_seconds"].as<int>() : 300;
+    if (cfg.slice_load_window_seconds <= 0)
+        throw std::runtime_error("slice_load_window_seconds must be positive");
+
     if (n["throughput_interfaces"]) {
         for (const auto& iface : n["throughput_interfaces"])
             cfg.throughput_interfaces.push_back(iface.as<std::string>());

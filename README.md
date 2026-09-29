@@ -154,6 +154,11 @@ conformance is roadmap item H1.6 (extended) / H1.7.
 
 ## 🚀 Quick Start
 
+**Live demo.** [`demo/`](demo/README.md) runs an Open5GS v2.8.0 core, UERANSIM
+UEs and this NWDAF in one container. `demo/run.sh` starts it; then
+`docker exec -it nwdaf-demo nwdaf-demo` walks through registrations, UE
+traffic, the Rel-18 analytics and a subscription.
+
 > **Verified on CI:** Ubuntu 22.04 (full: sd-journal + TLS + SQLite) and Ubuntu 20.04 (sd-journal + SQLite, TLS off) — see the [CI workflow](.github/workflows/ci.yml).
 
 ### Prerequisites
@@ -305,6 +310,7 @@ Everything deployment-specific lives in [`config/nwdaf.yaml`](config/nwdaf.yaml)
 | `throughput_interfaces` | `ogstun` | UPF tunnel interfaces to sample |
 | `oam_metrics_endpoints` | _(empty)_ | NF type → Prometheus metrics URL of that NF, scraped every collection interval as OAM input (TS 28.552 measurement names, such as per-slice registered UEs and PDU sessions). The Open5GS v2.8.0 defaults are AMF `http://127.0.0.5:9090/metrics`, SMF `…127.0.0.4…`, UPF `…127.0.0.7…` and PCF `…127.0.0.13…`. Scrape status appears under `oamSources` in `/health`. |
 | `slice_capacity` | _(empty)_ | Per S-NSSAI admission capacity: `snssai` (`sst`, optional `sd`) with `max_ues` and/or `max_pdu_sessions`, as an NSACF would be configured. SLICE_LOAD_LEVEL and NSI_LOAD_LEVEL are served and advertised only for these slices. The load level is the higher of the UE and PDU-session occupancy in percent (interpretation I-9). `max_ues` needs `oam_metrics_endpoints.AMF`, `max_pdu_sessions` needs `.SMF`. |
+| `slice_load_window_seconds` | `300` | Period of the slice load statistics when the consumer gives no `startTs`/`endTs`: the last N seconds. |
 | `collection_interval_seconds` | `10` | Collector cadence |
 | `supi_regex` | `imsi-(\d{15})` | SUPI extraction pattern (Open5GS v2.7.6) |
 | `mongodb_uri` / `mongodb_db` | `127.0.0.1:27017` / `open5gs` | Optional subscriber-count source |

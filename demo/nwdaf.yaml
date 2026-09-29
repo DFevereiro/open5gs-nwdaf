@@ -1,0 +1,49 @@
+# NWDAF configuration for the live demo (demo/Dockerfile): an all-in-one
+# Open5GS v2.8.0 core on its default loopback addresses, UERANSIM, and this
+# NWDAF as a systemd unit. See config/nwdaf.yaml for every key.
+nwdaf:
+  nf_instance_id: "7c1f4e2a-9b3d-4a6e-8f10-2d3c4b5a6e7f"
+  plmn_mcc: "999"
+  plmn_mnc: "70"
+  served_snssai_sst: 1
+
+  sbi_bind_address: "127.0.0.1"
+  sbi_port: 7779          # operator API (dashboard, via nginx)
+  sbi_h2_port: 7780       # 3GPP Nnwdaf interfaces, HTTP/2 (h2c)
+
+  # NRF: NFRegister/heartbeat, plus polls for NF instance IDs and NF status.
+  nrf_uri: "http://127.0.0.10:7777"
+  nrf_register_on_startup: true
+  nrf_heartbeat_interval_seconds: 10
+  nrf_nf_discovery: true
+  nrf_nf_discovery_interval_seconds: 10
+  nrf_nf_status_window_seconds: 600
+
+  # OAM input: the Open5GS default metrics endpoints.
+  oam_metrics_endpoints:
+    AMF: "http://127.0.0.5:9090/metrics"
+    SMF: "http://127.0.0.4:9090/metrics"
+    UPF: "http://127.0.0.7:9090/metrics"
+    PCF: "http://127.0.0.13:9090/metrics"
+
+  # Demo slice capacity for the default slice (SST 1): small, so a few UEs
+  # move the load level (interpretation I-9).
+  slice_capacity:
+    - snssai: {sst: 1}
+      max_ues: 5
+      max_pdu_sessions: 5
+  slice_load_window_seconds: 30     # short, so the demo level follows the UEs quickly
+
+  throughput_interfaces: ["ogstun"]
+  throughput_history_size: 360
+  collection_interval_seconds: 5
+  supi_regex: "imsi-(\\d{15})"
+
+  mongodb_uri: "mongodb://127.0.0.1:27017"
+  mongodb_db: "open5gs"
+
+  model_dir: "/opt/nwdaf/models"
+  log_level: "info"
+  log_file: "/var/log/open5gs/nwdaf.log"
+  openapi_spec_path: "/etc/open5gs/openapi/nwdaf-analytics-v1.yaml"
+  openapi_3gpp_dir: "/etc/open5gs/openapi/3gpp"
