@@ -67,6 +67,21 @@ void NwdafCollector::initMongo() {
 #endif
 }
 
+// BUG-07: the events whose raw line was not in the previous read; `seen`
+// becomes this read's lines.
+template <typename Event>
+std::vector<Event> NwdafCollector::freshEvents(std::vector<Event> events,
+                                               std::unordered_set<std::string>& seen) {
+    std::unordered_set<std::string> now;
+    std::vector<Event> fresh;
+    for (auto& e : events) {
+        now.insert(e.raw_line);
+        if (!seen.count(e.raw_line)) fresh.push_back(std::move(e));
+    }
+    seen = std::move(now);
+    return fresh;
+}
+
 // ── journald reading ─────────────────────────────────────────────────────────
 
 std::vector<std::string> NwdafCollector::readJournalLines(const std::string& unit, int n) {
@@ -213,12 +228,19 @@ std::vector<AmfEvent> NwdafCollector::collectAmfEvents() {
         ev.raw_line = line;
         ev.timestamp_iso = nowISO();
 
-        if (line.find("Registration") != std::string::npos ||
-            line.find("registration") != std::string::npos)
-            ev.event_type = "REGISTRATION";
-        else if (line.find("Deregistration") != std::string::npos ||
-                 line.find("deregistration") != std::string::npos)
+        // BUG-06: "Deregistration" contains "registration", so it is tested
+        // first. Open5GS v2.8.0 logs "Registration request" (no SUPI) and then
+        // "[imsi-…] Registration complete" for one registration: the request
+        // is skipped so each registration counts once.
+        if (line.find("Deregistration") != std::string::npos ||
+            line.find("deregistration") != std::string::npos ||
+            line.find("De-registration") != std::string::npos)
             ev.event_type = "DEREGISTRATION";
+        else if (line.find("Registration request") != std::string::npos)
+            continue;
+        else if (line.find("Registration") != std::string::npos ||
+                 line.find("registration") != std::string::npos)
+            ev.event_type = "REGISTRATION";
         else if (line.find("Authentication") != std::string::npos &&
                  line.find("success") != std::string::npos)
             ev.event_type = "AUTH_SUCCESS";
@@ -270,7 +292,18 @@ std::vector<SmfEvent> NwdafCollector::collectSmfEvents() {
         // must precede PDU_ESTABLISHED — a "PDU Session Establishment Reject"
         // line contains "PDU Session Establishment" and would otherwise be
         // miscounted as a successful establishment.
-        if (line.find("Establishment Reject") != std::string::npos ||
+        // BUG-06: Open5GS v2.8.0 logs a session as "UE SUPI[imsi-…] DNN[…]
+        // IPv4[…]" when it is up (src/smf/npcf-handler.c) and "Removed
+        // Session: UE IMSI:[imsi-…] DNN:[…]" when it goes (src/smf/context.c),
+        // followed by a SUPI-less "[Removed] Number of SMF-Sessions" summary,
+        // which is skipped so a release counts once.
+        if (line.find("Number of SMF-") != std::string::npos)
+            continue;
+        if (line.find("Removed Session:") != std::string::npos)
+            ev.event_type = "PDU_RELEASED";
+        else if (line.find("UE SUPI[") != std::string::npos && line.find("DNN[") != std::string::npos)
+            ev.event_type = "PDU_ESTABLISHED";
+        else if (line.find("Establishment Reject") != std::string::npos ||
             line.find("establishment reject") != std::string::npos ||
             line.find("[Rejected]") != std::string::npos ||
             line.find("Insufficient resources") != std::string::npos ||
@@ -438,16 +471,39 @@ int NwdafCollector::querySubscriberCountFromMongo() {
     }
 #endif
     // Fallback: query via mongosh — works even when libmongocxx is not compiled in.
-    FILE* fp = popen(
-        "mongosh --quiet open5gs --eval 'db.subscribers.countDocuments({})' 2>/dev/null",
-        "r");
-    if (!fp) return 0;
-    char buf[32] = {};
-    int count = 0;
-    if (fgets(buf, sizeof(buf), fp)) {
-        try { count = std::stoi(std::string(buf)); } catch (...) {}
+    // BUG-06: the configured URI and database (they are single-quoted for the
+    // shell, so a value containing a quote is refused), and a writable HOME:
+    // mongosh creates ~/.mongodb and prints a warning first when it cannot.
+    const std::string target = config_.mongodb_uri + "/" + config_.mongodb_db;
+    if (target.find('\'') != std::string::npos) {
+        spdlog::warn("mongodb_uri/mongodb_db contain a quote; subscriber count disabled");
+        return 0;
     }
+    const std::string cmd = "HOME=\"${TMPDIR:-/tmp}\" mongosh --quiet '" + target +
+                            "' --eval 'db.subscribers.countDocuments({})' 2>/dev/null";
+    FILE* fp = popen(cmd.c_str(), "r");
+    if (!fp) return 0;
+    std::string output;
+    char buf[256];
+    while (fgets(buf, sizeof(buf), fp)) output += buf;
     pclose(fp);
+    return parseCountOutput(output);
+}
+
+int NwdafCollector::parseCountOutput(const std::string& output) {
+    // The count is the last line that is a plain number; anything else
+    // (warnings, banners) is ignored.
+    int count = 0;
+    std::istringstream in(output);
+    for (std::string line; std::getline(in, line);) {
+        const auto b = line.find_first_not_of(" \t\r");
+        const auto e = line.find_last_not_of(" \t\r");
+        if (b == std::string::npos) continue;
+        const std::string t = line.substr(b, e - b + 1);
+        if (!t.empty() && std::all_of(t.begin(), t.end(), [](char c) { return c >= '0' && c <= '9'; })) {
+            try { count = std::stoi(t); } catch (...) {}
+        }
+    }
     return count;
 }
 
@@ -624,8 +680,11 @@ void NwdafCollector::bgLoop() {
     while (running_) {
         try {
             auto tp = collectUPFThroughput();
-            auto amf = collectAmfEvents();
-            auto smf = collectSmfEvents();
+            // BUG-07: each tick re-reads the journal tail, so drop the events
+            // whose line was already read on the previous tick. Open5GS lines
+            // carry millisecond timestamps: a repeat is the same event.
+            auto amf = freshEvents(collectAmfEvents(), seen_amf_lines_);
+            auto smf = freshEvents(collectSmfEvents(), seen_smf_lines_);
             auto nf  = collectNfLoad();
             auto oam = collectOamMetrics();
 

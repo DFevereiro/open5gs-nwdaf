@@ -88,6 +88,9 @@ public:
     // out to systemctl, which is unavailable in a test environment.
     virtual std::vector<NfMetric> collectNfLoad();
     int                        getSubscriberCount();
+    // BUG-06: the subscriber count in mongosh output — the last line that is
+    // a plain number (0 when there is none).
+    static int parseCountOutput(const std::string& output);
     // H1.1: scrape every configured oam_metrics_endpoints entry once.
     std::vector<NwdafOamSource> collectOamMetrics();
 
@@ -160,6 +163,13 @@ private:
     // ARCH-04: stateful PDU session tracker — persists across log rotation.
     // Keyed by session_id (= SUPI, or SUPI+DNN when extractable).
     std::unordered_set<std::string> active_sessions_;
+
+    // BUG-07: journal lines read on the previous tick, per NF.
+    std::unordered_set<std::string> seen_amf_lines_;
+    std::unordered_set<std::string> seen_smf_lines_;
+    template <typename Event>
+    static std::vector<Event> freshEvents(std::vector<Event> events,
+                                          std::unordered_set<std::string>& seen);
 
     // PROD-08: pre-snapshot for non-blocking throughput measurement
     struct NetSnapshot {

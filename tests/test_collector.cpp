@@ -166,3 +166,69 @@ TEST_CASE("PROD-01: NwdafConfig history_backend defaults to 'none'") {
     REQUIRE(cfg.history_backend == "none");
     REQUIRE(!cfg.history_db_path.empty());
 }
+
+// ── BUG-06: Open5GS v2.8.0 log formats (captured from a live core) ──────────
+
+TEST_CASE("BUG-06: Open5GS v2.8.0 AMF lines — one registration each, deregistration recognised") {
+    auto cfg = makeTestConfig();
+    MockNwdafCollector col(cfg);
+    col.setAmfLines({
+        "09/29 14:45:00.690: [amf] INFO: Registration request (../src/amf/gmm-sm.c:1323)",
+        "09/29 14:45:00.731: [gmm] INFO: [imsi-999700000000001] Registration complete (../src/amf/gmm-sm.c:3165)",
+        "09/29 14:46:44.960: [amf] INFO: [imsi-999700000000001] Deregistration request (../src/amf/ngap-handler.c:700)",
+    });
+    const auto events = col.collectAmfEvents();
+    REQUIRE(events.size() == 2);
+    REQUIRE(events[0].event_type == "REGISTRATION");
+    REQUIRE(events[0].supi == "imsi-999700000000001");
+    REQUIRE(events[1].event_type == "DEREGISTRATION");
+}
+
+TEST_CASE("BUG-06: Open5GS v2.8.0 SMF lines — session up and removed, summaries skipped") {
+    auto cfg = makeTestConfig();
+    MockNwdafCollector col(cfg);
+    col.setSmfLines({
+        "09/29 14:45:00.733: [smf] INFO: [Added] Number of SMF-Sessions is now 1 (../src/smf/context.c:3612)",
+        "09/29 14:45:00.757: [smf] INFO: UE SUPI[imsi-999700000000002] DNN[internet] IPv4[10.45.0.4] IPv6[] (../src/smf/npcf-handler.c:647)",
+        "09/29 14:45:00.758: [smf] INFO: UE SUPI[imsi-999700000000003] DNN[internet] IPv4[10.45.0.2] IPv6[] (../src/smf/npcf-handler.c:647)",
+        "09/29 14:46:44.977: [smf] INFO: Removed Session: UE IMSI:[imsi-999700000000002] DNN:[internet:1] IPv4:[10.45.0.4] IPv6:[] (../src/smf/context.c:2037)",
+        "09/29 14:46:44.977: [smf] INFO: [Removed] Number of SMF-Sessions is now 1 (../src/smf/context.c:3620)",
+    });
+    const auto events = col.collectSmfEvents();
+    REQUIRE(events.size() == 3);
+    REQUIRE(events[0].event_type == "PDU_ESTABLISHED");
+    REQUIRE(events[0].supi == "imsi-999700000000002");
+    REQUIRE(events[2].event_type == "PDU_RELEASED");
+    REQUIRE(events[2].supi == "imsi-999700000000002");
+
+    // The stateful session set ends with the one session still up.
+    col.startBackgroundCollection();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    col.stopBackgroundCollection();
+    REQUIRE(col.getActivePduSessionCount() == 1);
+}
+
+TEST_CASE("BUG-06: the subscriber count is the last numeric line of mongosh output") {
+    REQUIRE(NwdafCollector::parseCountOutput("5\n") == 5);
+    REQUIRE(NwdafCollector::parseCountOutput(
+        "Warning: Could not access file: EACCES: permission denied, mkdir '/var/run/open5gs'\n5\n") == 5);
+    REQUIRE(NwdafCollector::parseCountOutput("  12 \r\n") == 12);
+    REQUIRE(NwdafCollector::parseCountOutput("MongoServerSelectionError: connect ECONNREFUSED\n") == 0);
+    REQUIRE(NwdafCollector::parseCountOutput("") == 0);
+}
+
+TEST_CASE("BUG-07: journal lines re-read on later ticks are not counted again") {
+    auto cfg = makeTestConfig();   // 1 s collection interval
+    MockNwdafCollector col(cfg);
+    col.setSmfLines({
+        "09/29 14:45:00.757: [smf] INFO: UE SUPI[imsi-999700000000002] DNN[internet] IPv4[10.45.0.4] IPv6[] (../src/smf/npcf-handler.c:647)",
+        "09/29 14:45:00.758: [smf] INFO: UE SUPI[imsi-999700000000003] DNN[internet] IPv4[10.45.0.2] IPv6[] (../src/smf/npcf-handler.c:647)",
+    });
+    col.startBackgroundCollection();
+    std::this_thread::sleep_for(std::chrono::milliseconds(2500));   // three ticks, same journal tail
+    col.stopBackgroundCollection();
+    int established = 0;
+    for (const auto& e : col.getRecentSmfEvents(100))
+        if (e.event_type == "PDU_ESTABLISHED") ++established;
+    REQUIRE(established == 2);
+}
