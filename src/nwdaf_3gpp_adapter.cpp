@@ -1,5 +1,6 @@
 #include "nwdaf_3gpp_adapter.hpp"
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 
 using json = nlohmann::json;
@@ -56,5 +57,61 @@ std::optional<json> Nwdaf3gppAdapter::nfStatus(const std::map<std::string, size_
         if (pct >= 1) out[attr] = pct;
     }
     if (out.empty()) return std::nullopt;
+    return out;
+}
+
+// ── H1.2: slice load level (I-9) ────────────────────────────────────────────
+
+std::string Nwdaf3gppAdapter::snssaiKey(const json& snssai) {
+    NwdafSliceCapacity s;
+    s.sst = snssai.value("sst", 0);
+    s.sd  = snssai.value("sd", std::string());
+    for (auto& c : s.sd) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return s.key();
+}
+
+json Nwdaf3gppAdapter::snssai(const NwdafSliceCapacity& slice) {
+    json j = {{"sst", slice.sst}};
+    if (!slice.sd.empty()) j["sd"] = slice.sd;
+    return j;
+}
+
+std::vector<NwdafSliceLoad> Nwdaf3gppAdapter::sliceLoads(const NwdafConfig& cfg, const SliceQuery& query,
+                                                         const std::vector<NwdafOamScrape>& amf,
+                                                         const std::vector<NwdafOamScrape>& smf,
+                                                         std::chrono::system_clock::time_point now) {
+    std::vector<NwdafSliceLoad> out;
+    const auto from = query.from.value_or(std::chrono::system_clock::time_point{});
+    const auto to   = query.to.value_or(now);
+    for (const auto& slice : cfg.slice_capacity) {
+        if (!query.any && !query.keys.count(slice.key())) continue;
+        if (auto load = NwdafSliceLoadCalculator::compute(slice, NwdafSliceLoadCalculator::plmnLabel(cfg),
+                                                          amf, smf, from, to))
+            out.push_back(*load);
+    }
+    return out;
+}
+
+json Nwdaf3gppAdapter::sliceLoadLevelInfos(const std::vector<NwdafSliceLoad>& loads) {
+    json out = json::array();
+    for (const auto& l : loads)
+        out.push_back({{"loadLevelInformation", l.load_level},
+                       {"snssais", json::array({snssai(l.slice)})}});
+    return out;
+}
+
+std::vector<json> Nwdaf3gppAdapter::sliceLoadLevelGroups(const std::vector<NwdafSliceLoad>& loads) {
+    std::map<int, json> by_level;
+    for (const auto& l : loads) by_level[l.load_level].push_back(snssai(l.slice));
+    std::vector<json> out;
+    for (const auto& [level, snssais] : by_level)
+        out.push_back({{"loadLevelInformation", level}, {"snssais", snssais}});
+    return out;
+}
+
+json Nwdaf3gppAdapter::nsiLoadLevelInfos(const std::vector<NwdafSliceLoad>& loads) {
+    json out = json::array();
+    for (const auto& l : loads)
+        out.push_back({{"loadLevelInformation", l.load_level}, {"snssai", snssai(l.slice)}});
     return out;
 }

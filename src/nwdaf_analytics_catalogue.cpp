@@ -21,7 +21,16 @@ const std::set<std::string> NwdafAnalyticsCatalogue::OPERATOR_IDS = {
 // (H1.7, Step 3 of the Rel-18 plan).
 const std::set<std::string> NwdafAnalyticsCatalogue::REL18_IMPLEMENTED = {
     "NF_LOAD",
+    "SLICE_LOAD_LEVEL",   // H1.2, I-9
+    "NSI_LOAD_LEVEL",     // H1.2, I-9 (S-NSSAI level, no NSI IDs)
 };
+
+std::string NwdafAnalyticsCatalogue::fromAnalyticsInfoEventId(const std::string& event_id) {
+    // Nnwdaf_AnalyticsInfo names slice load level LOAD_LEVEL_INFORMATION
+    // (EventId); Nnwdaf_EventsSubscription and the NRF call it
+    // SLICE_LOAD_LEVEL (NwdafEvent). The other shared values are identical.
+    return event_id == "LOAD_LEVEL_INFORMATION" ? "SLICE_LOAD_LEVEL" : event_id;
+}
 
 std::string NwdafAnalyticsCatalogue::canonicalOperatorId(const std::string& id) {
     // COMP-05 / H1.4: pre-Rel-18 spellings kept working on the operator API.
@@ -37,6 +46,9 @@ std::set<std::string> NwdafAnalyticsCatalogue::rel18Advertised(const NwdafConfig
         // instance-ID source (the map, or NRF discovery) the NWDAF cannot
         // produce NF_LOAD truthfully.
         if (id == "NF_LOAD" && cfg.nf_instance_ids.empty() && !cfg.nrf_nf_discovery) continue;
+        // I-9: slice load level is defined only against a configured slice
+        // capacity, whose counts come from the configured metrics endpoints.
+        if ((id == "SLICE_LOAD_LEVEL" || id == "NSI_LOAD_LEVEL") && cfg.slice_capacity.empty()) continue;
         out.insert(id);
     }
     return out;

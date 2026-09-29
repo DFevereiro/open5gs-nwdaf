@@ -80,6 +80,8 @@ Code touching optional dependencies must be wrapped in the matching define and m
 - `docs/openapi/nwdaf-analytics-v1.yaml`: add the ID to the `AnalyticsId` enum, and add an `x-analyticsDataSchemas` entry mapping it to a response schema. `tests/test_openapi_conformance.cpp` requires the enum to equal `OPERATOR_IDS` exactly and requires every mapped schema to exist. It also validates each live GET and POST response against that schema, so if the spec and the code drift apart, CI fails.
 - The README's 3GPP compliance table, and `docs/3gpp-rel18-compliance.md`.
 
+On Nnwdaf_AnalyticsInfo, slice load level is the `EventId` `LOAD_LEVEL_INFORMATION`; `NwdafAnalyticsCatalogue::fromAnalyticsInfoEventId()` maps it to `SLICE_LOAD_LEVEL`, the name used everywhere else. Slice load level has no feature bit (base functionality); NSI_LOAD_LEVEL needs NsiLoad.
+
 IDs use the Rel-18 `NwdafEvent` spelling (`QOS_SUSTAINABILITY`, `RED_TRANS_EXP`). The legacy spellings `QoS_SUSTAINABILITY` and `REDUNDANT_TRANSMISSION` are accepted **only on the operator API**. `canonicalOperatorId()` rewrites them there, and the subscription store also canonicalizes on create and when it loads persisted rows.
 
 ## Testing
@@ -108,7 +110,7 @@ IDs use the Rel-18 `NwdafEvent` spelling (`QOS_SUSTAINABILITY`, `RED_TRANS_EXP`)
 - `docs/frozen-standards.md` is the **immutable** spec baseline. It pins the official 3GPP OpenAPI artifacts (forge.3gpp.org `5G_APIs`, commit `d05657604fa1`) and records open baseline items B-1 and B-2. Never change the versions or the pin silently. A baseline change needs a dated amendment in that file.
 - `docs/3gpp-rel18-compliance.md` is the gap and status tracker.
   - A row may be marked **Compliant** only if it cites a passing test. `tests/test_compliance_doc.cpp` enforces this: every Compliant row must name existing `tests/*.cpp` files and `TEST_CASE` names (a trailing "…" is a prefix).
-  - **M1 passed on 2026-09-28.** The claim "Release 18 compliant for the supported scope" covers exactly the scope table at the top of the compliance doc: both Nnwdaf services with NF_LOAD, HTTP/2, NRF lifecycle and discovery, mTLS and OAuth2, in the `rel18-sbi` build profile. Don't widen the claim without widening that table and its tests.
+  - **M1 passed on 2026-09-28.** The claim "Release 18 compliant for the supported scope" covers exactly the scope table at the top of the compliance doc: both Nnwdaf services with NF_LOAD, SLICE_LOAD_LEVEL and NSI_LOAD_LEVEL (the latter two only for configured `slice_capacity`, load level per I-9), HTTP/2, NRF lifecycle and discovery, mTLS and OAuth2, in the `rel18-sbi` build profile. Don't widen the claim without widening that table and its tests.
 - The work is sequenced as H1.7–H1.10, then M1, in `docs/ENHANCEMENT_PLAN_5G_6G.md`.
 - **Two SBI surfaces:**
   - `/nwdaf-analytics/v1/*` is the Open5GS **operator API** (dashboard, Prometheus). It is not a 3GPP interface; keep its behaviour stable.

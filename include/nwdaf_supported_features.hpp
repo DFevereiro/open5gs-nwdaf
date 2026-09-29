@@ -47,9 +47,10 @@ public:
     static std::optional<unsigned> number(NnwdafApi api, Feature feature);
 
     // Number of the feature that gates analytics `event` in `api`'s table.
-    // nullopt when the table defines no such feature: SM_CONGESTION on
-    // Nnwdaf_EventsSubscription (open item S-1), or an ID this NWDAF does
-    // not map.
+    // nullopt when the table defines no such feature: slice load level
+    // (SLICE_LOAD_LEVEL / LOAD_LEVEL_INFORMATION), which is base
+    // functionality of both APIs; SM_CONGESTION on Nnwdaf_EventsSubscription
+    // (open item S-1); or an ID this NWDAF does not map.
     static std::optional<unsigned> eventFeature(NnwdafApi api, const std::string& event);
 
     // This NWDAF's own features for `api`: the gating feature of every

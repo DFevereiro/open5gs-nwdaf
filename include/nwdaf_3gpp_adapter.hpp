@@ -1,6 +1,8 @@
 #pragma once
 #include "nwdaf_collector.hpp"
 #include "nwdaf_config.hpp"
+#include "nwdaf_slice_load.hpp"
+#include <chrono>
 #include <nlohmann/json.hpp>
 #include <cstddef>
 #include <map>
@@ -50,4 +52,32 @@ public:
     // no attribute would remain.
     static std::optional<nlohmann::json> nfStatus(const std::map<std::string, size_t>& polls_per_status,
                                                   size_t total_polls);
+
+    // H1.2: which slices and period a slice load request covers.
+    struct SliceQuery {
+        bool any = false;                   // anySlice
+        std::set<std::string> keys;         // requested S-NSSAIs, as NwdafSliceCapacity::key()
+        std::optional<std::chrono::system_clock::time_point> from, to;   // default: all held samples
+    };
+
+    // TS 29.571 Snssai ↔ NwdafSliceCapacity::key() ("1-000001", "1").
+    static std::string snssaiKey(const nlohmann::json& snssai);
+    static nlohmann::json snssai(const NwdafSliceCapacity& slice);
+
+    // The load of every configured slice the query selects and that has data
+    // for the period (I-9). A requested slice without a configured capacity
+    // has no load level, so it is absent.
+    static std::vector<NwdafSliceLoad> sliceLoads(const NwdafConfig& cfg, const SliceQuery& query,
+                                                  const std::vector<NwdafOamScrape>& amf,
+                                                  const std::vector<NwdafOamScrape>& smf,
+                                                  std::chrono::system_clock::time_point now);
+
+    // AnalyticsData.sliceLoadLevelInfos: one SliceLoadLevelInformation per slice.
+    static nlohmann::json sliceLoadLevelInfos(const std::vector<NwdafSliceLoad>& loads);
+    // EventNotification.sliceLoadLevelInfo carries one SliceLoadLevelInformation,
+    // whose single level applies to all its snssais: one per distinct level.
+    static std::vector<nlohmann::json> sliceLoadLevelGroups(const std::vector<NwdafSliceLoad>& loads);
+    // NsiLoadLevelInfo per slice, without nsiId (no network slice instances)
+    // and without the NsiLoadExt attributes.
+    static nlohmann::json nsiLoadLevelInfos(const std::vector<NwdafSliceLoad>& loads);
 };

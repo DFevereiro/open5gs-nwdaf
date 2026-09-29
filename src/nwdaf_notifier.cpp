@@ -169,9 +169,12 @@ void NwdafNotifier::deliverRel18(const Subscription& sub) {
     // accepted at subscription time.
     const bool one_time = evt_req.value("notifMethod", std::string()) == "ONE_TIME";
     const auto now = std::chrono::steady_clock::now();
-    const auto metrics = engine_.getCurrentNfMetrics();
-    const auto ids = nf_monitor_->ids();
-    const auto statuses = nf_monitor_->statuses();
+    NwdafReportInputs in;
+    in.metrics         = engine_.getCurrentNfMetrics();
+    in.nf_instance_ids = nf_monitor_->ids();
+    in.statuses        = nf_monitor_->statuses();
+    in.amf_oam         = engine_.getOamHistory("AMF");   // H1.2
+    in.smf_oam         = engine_.getOamHistory("SMF");
 
     json reports = json::array();
     std::vector<std::string> due_keys;
@@ -190,8 +193,9 @@ void NwdafNotifier::deliverRel18(const Subscription& sub) {
         }
         // No data now → nothing to report for this event (failNotifyCode
         // UNAVAILABLE_DATA needs StatisticsFailure, which is not supported).
-        if (auto r = NwdafSbiService::eventReport(es, metrics, ids, statuses, config_)) {
-            reports.push_back(*r);
+        auto rs = NwdafSbiService::eventReports(es, in, config_);
+        if (!rs.empty()) {
+            for (auto& r : rs) reports.push_back(std::move(r));
             due_keys.push_back(key);
         }
     }

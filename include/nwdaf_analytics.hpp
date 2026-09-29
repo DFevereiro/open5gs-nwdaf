@@ -48,6 +48,7 @@ public:
     std::pair<double,double>   getCurrentThroughput() const;   // {dl_kbps, ul_kbps}
     std::vector<NfMetric>      getCurrentNfMetrics()  const;
     std::vector<NwdafOamSource> getOamSources()       const;   // H1.1
+    std::vector<NwdafOamScrape> getOamHistory(const std::string& nf_type) const;   // H1.2
 
     // ARCH-01: data-quality-driven confidence computation (public for testability)
     // Returns 0 if data_points < min_points; otherwise scales linearly with

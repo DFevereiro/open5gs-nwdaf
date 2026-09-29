@@ -34,6 +34,10 @@ public:
     // official enum spelling is valid.
     static std::string canonicalOperatorId(const std::string& id);
 
+    // The NwdafEvent that a Nnwdaf_AnalyticsInfo EventId value denotes:
+    // LOAD_LEVEL_INFORMATION is SLICE_LOAD_LEVEL; other values are the same.
+    static std::string fromAnalyticsInfoEventId(const std::string& event_id);
+
     // IDs to advertise in the NRF profile (nwdafInfo). A function of code and
     // configuration only — never of transient data availability — so the
     // advertisement does not flap when a data source or the NRF is briefly

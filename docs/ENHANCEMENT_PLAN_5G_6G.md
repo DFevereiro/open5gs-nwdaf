@@ -36,7 +36,7 @@ Last updated **2026-08-23** (release `v1.1.0`).
 | Item | Issue | Status |
 |---|---|---|
 | H1.1 — Pluggable `IDataSource` ingestion | [#23](https://github.com/cem8kaya/open5gs-nwdaf/issues/23) | **Partial**: OAM input from the NFs' Prometheus metrics endpoints (TS 28.552 names) landed 2026-09-29 (`oam_metrics_endpoints`) · *adjusted for Rel-18 (§3a)*. Open5GS v2.8.0 implements no event-exposure service, so the SBI backend targets other cores; scraping stays the Open5GS path |
-| H1.2 — Slice awareness + `SLICE_LOAD_LEVEL` | [#24](https://github.com/cem8kaya/open5gs-nwdaf/issues/24) | Not started · *adjusted for Rel-18 (§3a)* |
+| H1.2 — Slice awareness + `SLICE_LOAD_LEVEL` | [#24](https://github.com/cem8kaya/open5gs-nwdaf/issues/24) | **Partial**: SLICE_LOAD_LEVEL and NSI_LOAD_LEVEL on the 3GPP interfaces from the per-slice OAM counts (2026-09-29; load level per I-9). Open: THRESHOLD reporting, NsiLoadExt, per-slice anomaly models · *adjusted for Rel-18 (§3a)* |
 | H1.3 — PFCP usage reporting | [#25](https://github.com/cem8kaya/open5gs-nwdaf/issues/25) | **On hold**: feasibility checked 2026-09-28 (§H1.3) — Open5GS reports only downlink volume per 100 MiB, to the SMF |
 | H1.4 — Rel-17/18 catalogue | [#26](https://github.com/cem8kaya/open5gs-nwdaf/issues/26) | **Partial**: `SM_CONGESTION`, `REDUNDANT_TRANSMISSION` (Rel-18 name `RED_TRANS_EXP`) and `DISPERSION` shipped; `DN_PERFORMANCE`, `USER_DATA_CONGESTION` and `WLAN_PERFORMANCE` are blocked on H1.1–H1.3 · *adjusted for Rel-18 (§3a)* |
 | H1.5 — MOS / service-experience E-model | [#27](https://github.com/cem8kaya/open5gs-nwdaf/issues/27) | **Done** |
@@ -145,6 +145,8 @@ Thread **S-NSSAI** (SST/SD) through the data model, features, and API:
 - Extend the anomaly feature vector from 5-D to a **per-slice** model set (one Isolation Forest per active S-NSSAI, or a slice-ID one-hot dimension).
 
 *Why it matters:* slicing is the defining SA feature; slice-level SLA assurance is the top operator NWDAF use case.
+
+**Landed 2026-09-29 — slice load level on the 3GPP interfaces.** SLICE_LOAD_LEVEL (`LOAD_LEVEL_INFORMATION` on Nnwdaf_AnalyticsInfo) and NSI_LOAD_LEVEL at S-NSSAI level, statistics only, from the per-slice AMF/SMF counts of the H1.1 OAM input. TS 29.520 fixes `loadLevelInformation` to 0–100 but leaves its meaning open, so the value follows the NSAC convention (interpretation I-9): the higher of UE and PDU-session occupancy against an operator-configured `slice_capacity`. Advertised only when that is configured. Still open: THRESHOLD reporting (the default notification method for these events), NsiLoadExt (`numOfUes`, `numOfPduSess`), and the per-slice anomaly models above. The data-model threading (`snssai` on events and samples) is no longer needed for these IDs.
 
 ### H1.3 — Unblock per-UE / per-session analytics via PFCP usage reporting **[TE][DA]**
 `gtp5g` blocks user-space capture, but the **UPF already produces per-PDR/URR volume counters over N4 (PFCP Usage Reports)**. Consume those instead of `/sys/class/net`:

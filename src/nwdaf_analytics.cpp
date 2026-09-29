@@ -161,6 +161,10 @@ std::vector<NwdafOamSource> NwdafAnalyticsEngine::getOamSources() const {
     return collector_.getOamSources();
 }
 
+std::vector<NwdafOamScrape> NwdafAnalyticsEngine::getOamHistory(const std::string& nf_type) const {
+    return collector_.getOamHistory(nf_type);
+}
+
 // PROD-04: hot-reload — update contamination; takes effect on the next retrain()
 void NwdafAnalyticsEngine::updateConfig(double anomaly_contamination) {
     config_.anomaly_contamination = anomaly_contamination;

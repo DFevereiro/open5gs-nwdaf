@@ -4,7 +4,7 @@
 
 ### Production-grade Network Data Analytics Function for 5G Core — in modern C++
 
-**Standalone NWDAF that plugs into [Open5GS](https://open5gs.org) and brings native ML-driven analytics to your 5G core — Release 18 compliant for the supported scope.** Both Nnwdaf services over HTTP/2 with the NF_LOAD analytics, the NRF lifecycle and discovery, mTLS and OAuth2; scope and evidence in [`docs/3gpp-rel18-compliance.md`](docs/3gpp-rel18-compliance.md).
+**Standalone NWDAF that plugs into [Open5GS](https://open5gs.org) and brings native ML-driven analytics to your 5G core — Release 18 compliant for the supported scope.** Both Nnwdaf services over HTTP/2 with the NF_LOAD, SLICE_LOAD_LEVEL and NSI_LOAD_LEVEL analytics, the NRF lifecycle and discovery, mTLS and OAuth2; scope and evidence in [`docs/3gpp-rel18-compliance.md`](docs/3gpp-rel18-compliance.md).
 
 [![CI](https://github.com/cem8kaya/open5gs-nwdaf/actions/workflows/ci.yml/badge.svg)](https://github.com/cem8kaya/open5gs-nwdaf/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
@@ -98,8 +98,9 @@ flowchart LR
 ## 📐 3GPP Compliance
 
 This table covers the **operator API** (`/nwdaf-analytics/v1/*`), where each ID
-is served in this project's own format. On the 3GPP interfaces, only `NF_LOAD`
-is served in Rel-18 form; the others are withheld until their inputs exist. The
+is served in this project's own format. On the 3GPP interfaces, `NF_LOAD`,
+`SLICE_LOAD_LEVEL` and `NSI_LOAD_LEVEL` are served in Rel-18 form; the others
+are withheld until their inputs exist. The
 per-ID reasons are in [`docs/3gpp-rel18-compliance.md`](docs/3gpp-rel18-compliance.md) §4.
 
 | Analytics ID | TS 23.288 V18.13.0 | ML backing | Status |
@@ -115,7 +116,7 @@ per-ID reasons are in [`docs/3gpp-rel18-compliance.md`](docs/3gpp-rel18-complian
 | `RED_TRANS_EXP` | §6.13 | Rate-stability estimator | ✅ Implemented |
 | `DISPERSION` | §6.10 | Gini / HHI concentration | ✅ Implemented |
 | `DN_PERFORMANCE` | §6.14 | — | ⬜ Planned (needs `Naf_EventExposure`) |
-| `SLICE_LOAD_LEVEL` | §6.3 | — | ⬜ Planned (needs S-NSSAI threading) |
+| `SLICE_LOAD_LEVEL`, `NSI_LOAD_LEVEL` | §6.3 | NSAC-style occupancy (I-9) | 3GPP interfaces only, for configured `slice_capacity` (H1.2) |
 | `USER_DATA_CONGESTION` | §6.8 | — | ⬜ Planned (needs per-location input) |
 | `WLAN_PERFORMANCE` | §6.11 | — | ⬜ Planned (N3IWF-dependent) |
 
@@ -130,7 +131,7 @@ IDs are spelled as in the Rel-18 `NwdafEvent` enum. The operator API still accep
 
 **Referenced specifications (Rel-17 baseline of the current implementation):** TS 23.288 v17.3.0 (architecture) · TS 29.520 v17.7.0 (Nnwdaf services) · TS 29.510 v17.6.0 (NRF) · TS 28.554 v17.4.0 (KPIs) · TS 33.501 (security)
 
-**Release 18.** The frozen Rel-18 baseline is [`docs/frozen-standards.md`](docs/frozen-standards.md), and the gap analysis is [`docs/3gpp-rel18-compliance.md`](docs/3gpp-rel18-compliance.md). Milestone **M1 passed** (2026-09-28): the NWDAF is **Release 18 compliant for the supported scope**, in builds with the `rel18-sbi` profile (HTTP/2 + TLS). The Rel-18 3GPP interfaces serve **NF_LOAD**. The other analytics listed above are served on the operator API; their Rel-18 forms are not yet advertised, because they need inputs the scraped data path lacks. Open5GS v2.8.0 exposes no NF event-exposure services and no OAuth 2.0 (see the compliance doc).
+**Release 18.** The frozen Rel-18 baseline is [`docs/frozen-standards.md`](docs/frozen-standards.md), and the gap analysis is [`docs/3gpp-rel18-compliance.md`](docs/3gpp-rel18-compliance.md). Milestone **M1 passed** (2026-09-28): the NWDAF is **Release 18 compliant for the supported scope**, in builds with the `rel18-sbi` profile (HTTP/2 + TLS). The Rel-18 3GPP interfaces serve **NF_LOAD**, and **SLICE_LOAD_LEVEL** and **NSI_LOAD_LEVEL** for slices with a configured capacity (load level per interpretation I-9). The other analytics listed above are served on the operator API; their Rel-18 forms are not yet advertised, because they need inputs the scraped data path lacks. Open5GS v2.8.0 exposes no NF event-exposure services and no OAuth 2.0 (see the compliance doc).
 
 ### OpenAPI contract
 
@@ -260,7 +261,7 @@ Base URL: `http://<host>:7779`
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/nnwdaf-analyticsinfo/v1/analytics?event-id=…&tgt-ue=…` | `Nnwdaf_AnalyticsInfo`. Currently NF_LOAD, when `nf_instance_ids` is configured. |
+| `GET` | `/nnwdaf-analyticsinfo/v1/analytics?event-id=…&tgt-ue=…` | `Nnwdaf_AnalyticsInfo`. `NF_LOAD`, when `nf_instance_ids` or `nrf_nf_discovery` is configured; `LOAD_LEVEL_INFORMATION` (slice load level) and `NSI_LOAD_LEVEL`, when `slice_capacity` is configured. |
 | `POST` | `/nnwdaf-eventssubscription/v1/subscriptions` | `Nnwdaf_EventsSubscription` Subscribe. Returns `201` + `Location`. |
 | `PUT` / `DELETE` | `/nnwdaf-eventssubscription/v1/subscriptions/{subscriptionId}` | Modify / Unsubscribe |
 
@@ -303,6 +304,7 @@ Everything deployment-specific lives in [`config/nwdaf.yaml`](config/nwdaf.yaml)
 | `nrf_nf_status_window_seconds` | `3600` | Window over which NF_LOAD `nfStatus` is computed: the share of NRF polls that found each instance registered, undiscoverable or absent. |
 | `throughput_interfaces` | `ogstun` | UPF tunnel interfaces to sample |
 | `oam_metrics_endpoints` | _(empty)_ | NF type → Prometheus metrics URL of that NF, scraped every collection interval as OAM input (TS 28.552 measurement names, such as per-slice registered UEs and PDU sessions). The Open5GS v2.8.0 defaults are AMF `http://127.0.0.5:9090/metrics`, SMF `…127.0.0.4…`, UPF `…127.0.0.7…` and PCF `…127.0.0.13…`. Scrape status appears under `oamSources` in `/health`. |
+| `slice_capacity` | _(empty)_ | Per S-NSSAI admission capacity: `snssai` (`sst`, optional `sd`) with `max_ues` and/or `max_pdu_sessions`, as an NSACF would be configured. SLICE_LOAD_LEVEL and NSI_LOAD_LEVEL are served and advertised only for these slices. The load level is the higher of the UE and PDU-session occupancy in percent (interpretation I-9). `max_ues` needs `oam_metrics_endpoints.AMF`, `max_pdu_sessions` needs `.SMF`. |
 | `collection_interval_seconds` | `10` | Collector cadence |
 | `supi_regex` | `imsi-(\d{15})` | SUPI extraction pattern (Open5GS v2.7.6) |
 | `mongodb_uri` / `mongodb_db` | `127.0.0.1:27017` / `open5gs` | Optional subscriber-count source |

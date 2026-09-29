@@ -3,6 +3,19 @@
 #include <map>
 #include <vector>
 
+// H1.2: the admission capacity of one network slice (S-NSSAI), as an NSACF
+// is configured with it (TS 23.501 V18 §5.15.11.0). Open5GS has no NSACF, so
+// the operator supplies it; slice load level is computed against it (I-9).
+struct NwdafSliceCapacity {
+    int         sst = 0;
+    std::string sd;                // 6 lower-case hex digits; empty = no SD
+    long        max_ues = 0;           // 0 = not configured
+    long        max_pdu_sessions = 0;  // 0 = not configured
+
+    // The S-NSSAI as Open5GS labels its per-slice metrics: "1-000001" or "1".
+    std::string key() const { return sd.empty() ? std::to_string(sst) : std::to_string(sst) + "-" + sd; }
+};
+
 class NwdafConfig {
 public:
     static NwdafConfig load(const std::string& yaml_path);
@@ -39,6 +52,10 @@ public:
     // `metrics.server`), scraped every collection interval as OAM input: the
     // measurements carry TS 28.552 names. Empty = no scraping.
     std::map<std::string, std::string> oam_metrics_endpoints;
+    // H1.2: per-slice admission capacity (I-9). SLICE_LOAD_LEVEL and
+    // NSI_LOAD_LEVEL are served and advertised only for configured slices.
+    // max_ues needs oam_metrics_endpoints.AMF; max_pdu_sessions needs .SMF.
+    std::vector<NwdafSliceCapacity> slice_capacity;
     int    throughput_history_size      = 360;
     int    collection_interval_seconds  = 10;
     int    amf_journal_lines            = 500;

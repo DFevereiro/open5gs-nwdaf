@@ -61,6 +61,7 @@ std::optional<unsigned> NwdafSupportedFeatures::eventFeature(NnwdafApi api,
         {"QOS_SUSTAINABILITY",  {5, 4}},
         {"ABNORMAL_BEHAVIOUR",  {6, 5}},
         {"NF_LOAD",             {8, 7}},
+        {"NSI_LOAD_LEVEL",      {9, 9}},    // NsiLoad
         {"SM_CONGESTION",       {15, 0}},   // S-1: no SMCCE bit in Table 5.1.8-1
         {"DISPERSION",          {17, 18}},
         {"RED_TRANS_EXP",       {18, 19}},

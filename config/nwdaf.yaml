@@ -56,6 +56,15 @@ nwdaf:
   #   UPF: "http://127.0.0.7:9090/metrics"
   #   PCF: "http://127.0.0.13:9090/metrics"
 
+  # Per-slice admission capacity, as an NSACF would be configured with it
+  # (Open5GS has none). SLICE_LOAD_LEVEL / NSI_LOAD_LEVEL are served only for
+  # these slices; load level = the higher of UEs ÷ max_ues and PDU sessions ÷
+  # max_pdu_sessions, in percent (interpretation I-9). Use your real limits.
+  # slice_capacity:
+  #   - snssai: {sst: 1, sd: "000001"}
+  #     max_ues: 1000
+  #     max_pdu_sessions: 2000
+
   # AMF journald log parsing — Open5GS v2.7.6 uses "imsi-XXXXXXXXXXXXXXX"
   # Adjust supi_regex for earlier versions if needed
   amf_journal_lines: 500

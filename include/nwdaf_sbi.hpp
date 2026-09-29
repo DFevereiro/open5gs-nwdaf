@@ -38,6 +38,14 @@ struct SbiRequest {
     std::optional<std::set<std::string>> authorized_analytics;
 };
 
+// The measurements event reports are computed from, gathered once per round.
+struct NwdafReportInputs {
+    std::vector<NfMetric>                  metrics;
+    std::map<std::string, std::string>     nf_instance_ids;
+    std::vector<NwdafNfStatusObservation>  statuses;
+    std::vector<NwdafOamScrape>            amf_oam, smf_oam;   // H1.2
+};
+
 struct SbiResponse {
     int status = 200;
     std::string content_type;
@@ -92,12 +100,12 @@ private:
                                                     SubscriptionOutcome& out);
 
 public:
-    // Why an NF_LOAD request cannot be served as asked; each operation maps a
-    // kind to its own spec-mandated response (Appendix A.2 / A.4).
+    // Why an NF_LOAD or slice load request cannot be served as asked; each
+    // operation maps a kind to its own spec-mandated response (Appendix A.2 / A.4).
     struct Rejection {
         enum Kind {
-            TargetMissing,     // tgt-ue / tgtUe absent (conditionally mandatory)
-            TargetIncorrect,   // neither anyUe nor supis, or a target form not implemented
+            TargetMissing,     // conditionally mandatory target absent (tgt-ue; the slices)
+            TargetIncorrect,   // target present but unusable (neither anyUe nor supis; …)
             Unsupported,       // a relevant attribute this NWDAF does not implement
             UnavailableData,   // past statistics requested; data not held (UNAVAILABLE_DATA)
         } kind;
@@ -114,19 +122,42 @@ public:
         const nlohmann::json* req, const std::string& req_at,
         Nwdaf3gppAdapter::NfLoadQuery& query);
 
-    // The EventNotification for one accepted EventSubscription, from current
-    // measurements; nullopt when no analytics data exists now. Shared by the
-    // immediate report and the notifier.
-    static std::optional<nlohmann::json> eventReport(const nlohmann::json& event_subscription,
-                                                     const std::vector<NfMetric>& metrics,
-                                                     const std::map<std::string, std::string>& nf_instance_ids,
-                                                     const std::vector<NwdafNfStatusObservation>& statuses,
-                                                     const NwdafConfig& config);
+    // H1.2: interpret the slice load inputs of SLICE_LOAD_LEVEL / NSI_LOAD_LEVEL
+    // (TS 29.520 V18.14.0 §4.2.2.2.2, §4.3.2.2). `filter` is the AnalyticsInfo
+    // event-filter or the EventSubscription itself (null when absent); `req`
+    // the reporting requirements (may be null).
+    static std::optional<Rejection> interpretSliceLoad(
+        const std::string& event,
+        const nlohmann::json* filter, const std::string& filter_at,
+        const nlohmann::json* req, const std::string& req_at,
+        Nwdaf3gppAdapter::SliceQuery& query);
+
+    // H1.2: UNAVAILABLE_DATA when the requested period starts before the
+    // held metrics history.
+    static std::optional<Rejection> sliceHistoryCovers(const Nwdaf3gppAdapter::SliceQuery& query,
+                                                       const NwdafReportInputs& in,
+                                                       const NwdafConfig& config,
+                                                       const std::string& req_at);
+
+    // The EventNotifications for one accepted EventSubscription, from current
+    // measurements; empty when no analytics data exists now. Shared by the
+    // immediate report and the notifier. SLICE_LOAD_LEVEL yields one per
+    // distinct load level (EventNotification carries a single level).
+    static std::vector<nlohmann::json> eventReports(const nlohmann::json& event_subscription,
+                                                    const NwdafReportInputs& in,
+                                                    const NwdafConfig& config);
+
+    // Current measurements for event reports.
+    NwdafReportInputs inputs() const;
 
 private:
     SbiResponse nfLoadInfo(std::map<std::string, nlohmann::json>& values,
                            const std::optional<NwdafFeatureSet>& consumer,
                            const NwdafFeatureSet& local);
+    SbiResponse sliceLoadInfo(const std::string& event,
+                              std::map<std::string, nlohmann::json>& values,
+                              const std::optional<NwdafFeatureSet>& consumer,
+                              const NwdafFeatureSet& local);
 
     NwdafAnalyticsEngine&   engine_;
     NwdafSubscriptionStore& subs_;

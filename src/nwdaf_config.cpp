@@ -5,6 +5,7 @@
 #include <sstream>
 #include <iomanip>
 #include <cmath>
+#include <cctype>
 
 
 #include <regex>
@@ -82,6 +83,41 @@ NwdafConfig NwdafConfig::load(const std::string& yaml_path) {
             if (url.rfind("http://", 0) != 0 && url.rfind("https://", 0) != 0)
                 throw std::runtime_error("oam_metrics_endpoints: " + type + " is not an http(s) URL: " + url);
             cfg.oam_metrics_endpoints[type] = url;
+        }
+    }
+
+    // H1.2: per-slice admission capacity (I-9).
+    if (n["slice_capacity"]) {
+        static const std::regex SD_RE("^[0-9a-fA-F]{6}$");
+        for (const auto& e : n["slice_capacity"]) {
+            NwdafSliceCapacity c;
+            const auto snssai = e["snssai"];
+            if (!snssai || !snssai["sst"])
+                throw std::runtime_error("slice_capacity: every entry needs snssai.sst");
+            c.sst = snssai["sst"].as<int>();
+            if (c.sst < 0 || c.sst > 255)
+                throw std::runtime_error("slice_capacity: sst must be 0-255");
+            if (snssai["sd"]) {
+                c.sd = snssai["sd"].as<std::string>();
+                if (!std::regex_match(c.sd, SD_RE))
+                    throw std::runtime_error("slice_capacity: sd must be 6 hexadecimal digits: " + c.sd);
+                for (auto& ch : c.sd) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+            }
+            c.max_ues          = e["max_ues"]          ? e["max_ues"].as<long>()          : 0;
+            c.max_pdu_sessions = e["max_pdu_sessions"] ? e["max_pdu_sessions"].as<long>() : 0;
+            if (c.max_ues < 0 || c.max_pdu_sessions < 0 || (c.max_ues == 0 && c.max_pdu_sessions == 0))
+                throw std::runtime_error("slice_capacity " + c.key() +
+                                         ": set max_ues and/or max_pdu_sessions to a positive number");
+            if (c.max_ues > 0 && !cfg.oam_metrics_endpoints.count("AMF"))
+                throw std::runtime_error("slice_capacity " + c.key() +
+                                         ": max_ues needs oam_metrics_endpoints.AMF");
+            if (c.max_pdu_sessions > 0 && !cfg.oam_metrics_endpoints.count("SMF"))
+                throw std::runtime_error("slice_capacity " + c.key() +
+                                         ": max_pdu_sessions needs oam_metrics_endpoints.SMF");
+            for (const auto& other : cfg.slice_capacity)
+                if (other.key() == c.key())
+                    throw std::runtime_error("slice_capacity: " + c.key() + " is configured twice");
+            cfg.slice_capacity.push_back(c);
         }
     }
 
