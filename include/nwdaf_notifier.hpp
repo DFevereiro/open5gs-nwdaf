@@ -1,7 +1,7 @@
 #pragma once
 #include "nwdaf_subscription.hpp"
 #include "nwdaf_analytics.hpp"
-#include "nwdaf_nf_id_resolver.hpp"
+#include "nwdaf_nf_monitor.hpp"
 #include <memory>
 #include <thread>
 #include <atomic>
@@ -28,7 +28,7 @@ public:
                   std::atomic<uint64_t>*  notif_total    = nullptr,
                   std::atomic<uint64_t>*  notif_failures = nullptr,
                   const NwdafConfig&      config         = NwdafConfig(),
-                  std::shared_ptr<NwdafNfIdResolver> resolver = nullptr);   // H1.9
+                  std::shared_ptr<NwdafNfMonitor> nf_monitor = nullptr);   // H1.9
 
     void start();
     void stop();
@@ -43,7 +43,7 @@ private:
     void deliverRel18(const Subscription& sub);
 
     NwdafConfig             config_;
-    std::shared_ptr<NwdafNfIdResolver> resolver_;
+    std::shared_ptr<NwdafNfMonitor> nf_monitor_;
 
     NwdafSubscriptionStore& subs_;
     NwdafAnalyticsEngine&   engine_;

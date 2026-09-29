@@ -5,6 +5,8 @@
 #include <string>
 #include <cstdint>
 #include <chrono>
+#include <mutex>
+#include <optional>
 
 class MockNwdafCollector : public NwdafCollector {
 public:
@@ -17,6 +19,8 @@ public:
     void setMemKb(int pid, long kb);
     void setSubscriberCount(int n);
     void setNfMetrics(const std::vector<NfMetric>& metrics);
+    // H1.1: body served for a metrics endpoint URL; nullopt = unreachable.
+    void setOamMetrics(const std::string& url, std::optional<std::string> body);
 
     // BUG-01 test support: control the clock seen by computeCpuPct
     void setMockCpuTime(std::chrono::steady_clock::time_point t);
@@ -35,6 +39,7 @@ protected:
     long                             readProcMemKb(int pid) override;
     std::pair<uint64_t,uint64_t>     readNetStats(const std::string& iface) override;
     int                              querySubscriberCountFromMongo() override;
+    std::optional<std::string>       readOamMetrics(const std::string& url) override;
     // Serves metrics supplied via setNfMetrics(); falls through to the real
     // systemctl-backed implementation when none were injected.
     std::vector<NfMetric>            collectNfLoad() override;
@@ -49,6 +54,8 @@ private:
     std::map<int, long>                                     mock_mem_kb_;
     int                                                     mock_subscriber_count_ = 5;
     std::vector<NfMetric>                                   mock_nf_metrics_;
+    std::map<std::string, std::optional<std::string>>       mock_oam_metrics_;
+    mutable std::mutex                                      mock_mutex_;
 
     // BUG-01: injectable clock state
     std::chrono::steady_clock::time_point mock_cpu_now_;

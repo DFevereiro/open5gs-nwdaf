@@ -157,6 +157,10 @@ std::vector<NfMetric> NwdafAnalyticsEngine::getCurrentNfMetrics() const {
     return collector_.getCachedNfMetrics();
 }
 
+std::vector<NwdafOamSource> NwdafAnalyticsEngine::getOamSources() const {
+    return collector_.getOamSources();
+}
+
 // PROD-04: hot-reload — update contamination; takes effect on the next retrain()
 void NwdafAnalyticsEngine::updateConfig(double anomaly_contamination) {
     config_.anomaly_contamination = anomaly_contamination;

@@ -4,7 +4,7 @@
 #include "nwdaf_server.hpp"
 #include "nwdaf_subscription.hpp"
 #include "nwdaf_nrf_client.hpp"
-#include "nwdaf_nf_id_resolver.hpp"
+#include "nwdaf_nf_monitor.hpp"
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
@@ -123,8 +123,9 @@ int main(int argc, char* argv[]) {
     }
 #endif
     NwdafSubscriptionStore subs(sub_backend);
-    // H1.9: NF instance IDs for NF_LOAD — configured, else NRF discovery.
-    auto nf_ids = std::make_shared<NwdafNfIdResolver>(config);
+    // H1.9: NF instance IDs and NRF status for NF_LOAD — configured IDs, and
+    // polls of the NRF when nrf_nf_discovery is set.
+    auto nf_ids = std::make_shared<NwdafNfMonitor>(config);
     NwdafServer           server(engine, subs, config, nf_ids);
 
     g_server_ptr    = &server;
@@ -141,7 +142,7 @@ int main(int argc, char* argv[]) {
     NwdafNrfClient nrf(config);
     if (config.nrf_register_on_startup) nrf.registerNf();
 
-    // H1.9: keep the discovered NF instance IDs current (Nnrf_NFDiscovery).
+    // H1.9: poll the NRF (NFListRetrieval / NFProfileRetrieval).
     std::thread nf_discovery_thread;
     if (config.nrf_nf_discovery) {
         nf_discovery_thread = std::thread([&config, nf_ids]() {

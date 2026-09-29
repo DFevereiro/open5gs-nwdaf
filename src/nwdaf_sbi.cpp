@@ -96,10 +96,10 @@ bool bothStatisticsAndPrediction(const json& req) {
 NwdafSbiService::NwdafSbiService(NwdafAnalyticsEngine& engine,
                                  NwdafSubscriptionStore& subs,
                                  const NwdafConfig& config,
-                                 std::shared_ptr<NwdafNfIdResolver> resolver)
+                                 std::shared_ptr<NwdafNfMonitor> nf_monitor)
     : engine_(engine), subs_(subs), config_(config),
       validator_(config.openapi_3gpp_dir),
-      resolver_(resolver ? std::move(resolver) : std::make_shared<NwdafNfIdResolver>(config))
+      nf_monitor_(nf_monitor ? std::move(nf_monitor) : std::make_shared<NwdafNfMonitor>(config))
 {
     try {
         validator_.document(EVTS);
@@ -364,7 +364,8 @@ SbiResponse NwdafSbiService::nfLoadInfo(std::map<std::string, json>& values,
     }
 
     const json infos = Nwdaf3gppAdapter::nfLoadLevelInfos(engine_.getCurrentNfMetrics(),
-                                                          resolver_->ids(), query);
+                                                          nf_monitor_->ids(),
+                                                          nf_monitor_->statuses(), query);
     // §4.3.2.2: "If the requested NWDAF Analytics data does not exist, the
     // NWDAF shall respond with 204 No Content".
     if (infos.empty()) return {204, "", "", {}};
@@ -554,6 +555,7 @@ static json representation(const json& request, const std::vector<size_t>& accep
 std::optional<json> NwdafSbiService::eventReport(const json& es,
                                                  const std::vector<NfMetric>& metrics,
                                                  const std::map<std::string, std::string>& nf_instance_ids,
+                                                 const std::vector<NwdafNfStatusObservation>& statuses,
                                                  const NwdafConfig& config) {
     const std::string event = es.value("event", "");
     if (event != "NF_LOAD") return std::nullopt;
@@ -562,7 +564,7 @@ std::optional<json> NwdafSbiService::eventReport(const json& es,
                         es.contains("extraReportReq") ? &es["extraReportReq"] : nullptr,
                         "extraReportReq", query))
         return std::nullopt;   // cannot happen for an accepted event
-    json infos = Nwdaf3gppAdapter::nfLoadLevelInfos(metrics, nf_instance_ids, query);
+    json infos = Nwdaf3gppAdapter::nfLoadLevelInfos(metrics, nf_instance_ids, statuses, query);
     if (infos.empty()) return std::nullopt;
     const auto now = std::chrono::system_clock::now();
     return json{{"event", event},
@@ -585,9 +587,10 @@ SbiResponse NwdafSbiService::createSubscription(const SbiRequest& req) {
     if (rep.contains("evtReq") && rep["evtReq"].value("immRep", false)) {
         json reports = json::array();
         const auto metrics = engine_.getCurrentNfMetrics();
-        const auto ids = resolver_->ids();
+        const auto ids = nf_monitor_->ids();
+        const auto statuses = nf_monitor_->statuses();
         for (const auto& es : rep["eventSubscriptions"])
-            if (auto r = eventReport(es, metrics, ids, config_)) reports.push_back(*r);
+            if (auto r = eventReport(es, metrics, ids, statuses, config_)) reports.push_back(*r);
         if (!reports.empty()) body["eventNotifications"] = reports;
     }
     spdlog::info("EventsSubscription: created {} ({} event(s), {} failed)",

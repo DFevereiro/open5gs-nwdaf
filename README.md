@@ -299,8 +299,10 @@ Everything deployment-specific lives in [`config/nwdaf.yaml`](config/nwdaf.yaml)
 | `sbi_h2_port` | `7780` | The 3GPP interfaces over HTTP/2 (TS 29.500 §5.2). This is the endpoint registered with the NRF. `0` disables it. |
 | `nf_service_names` | `AMF→amfd`, … | Open5GS systemd unit suffix map |
 | `nf_instance_ids` | — | NF type → the NF's real `nfInstanceId`, for Rel-18 NF_LOAD on the 3GPP interfaces. Takes precedence over discovery. |
-| `nrf_nf_discovery` / `nrf_nf_discovery_interval_seconds` | `false` / `60` | Resolve the remaining NF instance IDs from the NRF (Nnrf_NFDiscovery). A type is used only when exactly one instance is registered. NF_LOAD is advertised when this is on or `nf_instance_ids` is set. |
+| `nrf_nf_discovery` / `nrf_nf_discovery_interval_seconds` | `false` / `60` | Poll the NRF (NFListRetrieval and NFProfileRetrieval) every interval. This resolves the remaining NF instance IDs (a type is used only when exactly one instance is registered) and records each NF's NRF status for NF_LOAD `nfStatus`. NF_LOAD is advertised when this is on or `nf_instance_ids` is set. NFDiscover is not used: Open5GS NFs don't allow the NWDAF NF type, so the NRF hides them from it. |
+| `nrf_nf_status_window_seconds` | `3600` | Window over which NF_LOAD `nfStatus` is computed: the share of NRF polls that found each instance registered, undiscoverable or absent. |
 | `throughput_interfaces` | `ogstun` | UPF tunnel interfaces to sample |
+| `oam_metrics_endpoints` | _(empty)_ | NF type → Prometheus metrics URL of that NF, scraped every collection interval as OAM input (TS 28.552 measurement names, such as per-slice registered UEs and PDU sessions). The Open5GS v2.8.0 defaults are AMF `http://127.0.0.5:9090/metrics`, SMF `…127.0.0.4…`, UPF `…127.0.0.7…` and PCF `…127.0.0.13…`. Scrape status appears under `oamSources` in `/health`. |
 | `collection_interval_seconds` | `10` | Collector cadence |
 | `supi_regex` | `imsi-(\d{15})` | SUPI extraction pattern (Open5GS v2.7.6) |
 | `mongodb_uri` / `mongodb_db` | `127.0.0.1:27017` / `open5gs` | Optional subscriber-count source |

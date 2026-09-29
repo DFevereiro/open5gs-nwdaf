@@ -2,11 +2,14 @@
 // The registered NFProfile is validated against the official schema.
 #include <catch2/catch_test_macros.hpp>
 #include "nwdaf_nrf_client.hpp"
-#include "nwdaf_nf_id_resolver.hpp"
+#include "nwdaf_nf_monitor.hpp"
 #include "nwdaf_analytics_catalogue.hpp"
 #include <map>
 #include "nwdaf_schema_validator.hpp"
 #include "nwdaf_sbi.hpp"
+#include "mock_open5gs.hpp"
+#include "nwdaf_analytics.hpp"
+#include "nwdaf_subscription.hpp"
 #include <httplib.h>
 #include <mutex>
 #include <string>
@@ -29,20 +32,36 @@ struct MockNrf {
     std::mutex m;
     std::vector<NrfRequest> requests;
     int patch_status = 204;
-    int discovery_status = 200;
+    int list_status = 200;
     std::map<std::string, std::vector<std::string>> instances;   // NF type → registered IDs
+    std::map<std::string, std::string> nf_status;                // ID → NFStatus (default REGISTERED)
 
     SbiResponse handle(const std::string& method, const std::string& path, const std::string& body,
-                       const std::string& target_type = "", const std::string& requester = "") {
+                       const std::string& nf_type = "") {
         std::lock_guard<std::mutex> lk(m);
-        requests.push_back({method, path + (target_type.empty() ? "" : "?" + target_type + "," + requester), body});
-        if (method == "GET" && path == "/nnrf-disc/v1/nf-instances") {
-            if (discovery_status != 200) return {discovery_status, "", "", {}};
-            json result = {{"nfInstances", json::array()}};
-            for (const auto& id : instances[target_type])
-                result["nfInstances"].push_back({{"nfInstanceId", id}, {"nfType", target_type},
-                                                 {"nfStatus", "REGISTERED"}});
-            return {200, "application/json", result.dump(), {}};
+        requests.push_back({method, path + (nf_type.empty() ? "" : "?nf-type=" + nf_type), body});
+        const std::string list = "/nnrf-nfm/v1/nf-instances";
+        if (method == "GET" && path == list) {   // NFListRetrieval
+            if (list_status != 200) return {list_status, "", "", {}};
+            json items = json::array();
+            for (const auto& id : instances[nf_type])
+                items.push_back({{"href", "http://127.0.0.1:" + std::to_string(NRF_PORT) + list + "/" + id}});
+            json uris = {{"_links", {{"item", items}, {"self", {{"href", list}}}}},
+                         {"totalItemCount", items.size()}};
+            return {200, "application/3gppHal+json", uris.dump(), {}};
+        }
+        if (method == "GET" && path.rfind(list + "/", 0) == 0) {   // NFProfileRetrieval
+            const std::string id = path.substr(list.size() + 1);
+            for (const auto& [type, ids] : instances)
+                for (const auto& i : ids)
+                    if (i == id) {
+                        const auto st = nf_status.find(id);
+                        return {200, "application/json",
+                                json{{"nfInstanceId", id}, {"nfType", type},
+                                     {"nfStatus", st == nf_status.end() ? "REGISTERED" : st->second}}.dump(),
+                                {}};
+                    }
+            return {404, "", "", {}};
         }
         if (method == "PUT")    return {201, "application/json", R"({"heartBeatTimer":7})", {}};
         if (method == "PATCH")  return {patch_status, "", "", {}};
@@ -58,7 +77,7 @@ struct MockNrf {
         [this](const SbiRequest& r, const std::string&) {
             auto q = [&](const char* k) { auto it = r.query.find(k);
                                           return it == r.query.end() ? std::string() : it->second; };
-            return handle(r.method, r.path, r.body, q("target-nf-type"), q("requester-nf-type"));
+            return handle(r.method, r.path, r.body, q("nf-type"));
         }};
     MockNrf() { server.start(); }
     ~MockNrf() { server.stop(); }
@@ -67,9 +86,7 @@ struct MockNrf {
     std::thread thread;
     MockNrf() {
         auto h = [this](const httplib::Request& req, httplib::Response& res) {
-            SbiResponse r = handle(req.method, req.path, req.body,
-                                   req.get_param_value("target-nf-type"),
-                                   req.get_param_value("requester-nf-type"));
+            SbiResponse r = handle(req.method, req.path, req.body, req.get_param_value("nf-type"));
             res.status = r.status;
             if (!r.body.empty()) res.set_content(r.body, r.content_type);
         };
@@ -189,7 +206,7 @@ TEST_CASE("H1.9: NFDeregister DELETEs the instance") {
     REQUIRE(seen.back().path == std::string("/nnrf-nfm/v1/nf-instances/") + NF_ID);
 }
 
-// ── H1.9: NF instance IDs from NRF discovery ────────────────────────────────
+// ── H1.9: NF instance IDs and NRF status from NRF polls ─────────────────────
 
 static const char* AMF_ID  = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 static const char* SMF1_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -203,62 +220,158 @@ static NwdafConfig discoveryConfig() {
     return cfg;
 }
 
-TEST_CASE("H1.9: discovery resolves an NF type only when exactly one instance is registered") {
+// A monitor on a controllable clock, for the status window.
+struct ClockedMonitor : NwdafNfMonitor {
+    using NwdafNfMonitor::NwdafNfMonitor;
+    std::chrono::system_clock::time_point t = std::chrono::system_clock::now();
+    std::chrono::system_clock::time_point now() const override { return t; }
+};
+
+TEST_CASE("H1.9: NF instance IDs come from NFListRetrieval, only when exactly one instance is listed") {
     MockNrf nrf;
     nrf.instances = {{"AMF", {AMF_ID}}, {"SMF", {SMF1_ID, SMF2_ID}}};
-    NwdafNfIdResolver resolver(discoveryConfig());
-    resolver.refresh();
-    const auto ids = resolver.ids();
+    NwdafNfMonitor monitor(discoveryConfig());
+    monitor.refresh();
+    const auto ids = monitor.ids();
     REQUIRE(ids.at("AMF") == AMF_ID);
     REQUIRE(ids.count("SMF") == 0);   // two SMFs: which one is measured here is unknown
     REQUIRE(ids.count("UPF") == 0);   // none registered
 
-    // The query names both mandatory parameters (TS 29.510 NFDiscovery).
-    bool asked = false;
-    for (const auto& r : nrf.seen())
-        asked = asked || (r.method == "GET" && r.path == "/nnrf-disc/v1/nf-instances?AMF,NWDAF");
-    REQUIRE(asked);
+    // NFManagement list and profile retrieval — never NFDiscover, which the
+    // NRF filters by allowedNfTypes (Open5GS NFs don't allow NWDAF).
+    bool listed = false;
+    for (const auto& r : nrf.seen()) {
+        REQUIRE(r.path.rfind("/nnrf-disc/", 0) == std::string::npos);
+        listed = listed || (r.method == "GET" && r.path == "/nnrf-nfm/v1/nf-instances?nf-type=AMF");
+    }
+    REQUIRE(listed);
 }
 
-TEST_CASE("H1.9: configured NF instance IDs win and are not looked up") {
+TEST_CASE("H1.9: configured NF instance IDs win over the NRF list") {
     MockNrf nrf;
     nrf.instances = {{"AMF", {AMF_ID}}, {"UPF", {"eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"}}};
     NwdafConfig cfg = discoveryConfig();
     cfg.nf_instance_ids = {{"UPF", UPF_ID}};
-    NwdafNfIdResolver resolver(cfg);
-    resolver.refresh();
-    REQUIRE(resolver.ids().at("UPF") == UPF_ID);
-    for (const auto& r : nrf.seen()) REQUIRE(r.path.find("?UPF,") == std::string::npos);
+    NwdafNfMonitor monitor(cfg);
+    monitor.refresh();
+    REQUIRE(monitor.ids().at("UPF") == UPF_ID);
+    REQUIRE(monitor.ids().at("AMF") == AMF_ID);
 }
 
-TEST_CASE("H1.9: a failed discovery keeps the last known ID; a deregistered NF is dropped") {
+TEST_CASE("H1.9: a failed NRF poll keeps the last known ID; a deregistered NF is dropped") {
     MockNrf nrf;
     nrf.instances = {{"AMF", {AMF_ID}}};
-    NwdafNfIdResolver resolver(discoveryConfig());
-    resolver.refresh();
-    nrf.discovery_status = 503;
-    resolver.refresh();
-    REQUIRE(resolver.ids().at("AMF") == AMF_ID);
+    NwdafNfMonitor monitor(discoveryConfig());
+    monitor.refresh();
+    nrf.list_status = 503;
+    monitor.refresh();
+    REQUIRE(monitor.ids().at("AMF") == AMF_ID);
 
-    nrf.discovery_status = 200;
+    nrf.list_status = 200;
     nrf.instances.clear();
-    resolver.refresh();
-    REQUIRE(resolver.ids().count("AMF") == 0);
+    monitor.refresh();
+    REQUIRE(monitor.ids().count("AMF") == 0);
 }
 
 TEST_CASE("H1.9: without nrf_nf_discovery the NRF is never queried") {
     MockNrf nrf;
     NwdafConfig cfg = discoveryConfig();
     cfg.nrf_nf_discovery = false;
-    NwdafNfIdResolver resolver(cfg);
-    resolver.refresh();
+    NwdafNfMonitor monitor(cfg);
+    monitor.refresh();
     REQUIRE(nrf.seen().empty());
-    REQUIRE(resolver.ids().empty());
+    REQUIRE(monitor.ids().empty());
+    REQUIRE(monitor.statuses().empty());
 }
 
-TEST_CASE("H1.9: enabling discovery is a configured capability that advertises NF_LOAD") {
+TEST_CASE("H1.9: enabling NRF polling is a configured capability that advertises NF_LOAD") {
     NwdafConfig cfg = nrfConfig();
     REQUIRE(NwdafAnalyticsCatalogue::rel18Advertised(cfg).count("NF_LOAD") == 0);
     cfg.nrf_nf_discovery = true;
     REQUIRE(NwdafAnalyticsCatalogue::rel18Advertised(cfg).count("NF_LOAD") == 1);
+}
+
+static json statusOf(const std::vector<NwdafNfStatusObservation>& all, const std::string& id) {
+    for (const auto& s : all) if (s.nf_instance_id == id) return s.nf_status;
+    return nullptr;
+}
+
+TEST_CASE("H1.9: nfStatus is the share of NRF polls that found each state (I-8)") {
+    MockNrf nrf;
+    nrf.instances = {{"AMF", {AMF_ID}}};
+    ClockedMonitor monitor(discoveryConfig());
+    REQUIRE(monitor.statuses().empty());   // no poll yet
+
+    monitor.refresh();                                     // REGISTERED
+    monitor.t += std::chrono::seconds(60); monitor.refresh();   // REGISTERED
+    nrf.nf_status[AMF_ID] = "UNDISCOVERABLE";
+    monitor.t += std::chrono::seconds(60); monitor.refresh();
+    nrf.instances.clear();                                 // gone from the NRF
+    monitor.t += std::chrono::seconds(60); monitor.refresh();
+
+    const json st = statusOf(monitor.statuses(), AMF_ID);
+    REQUIRE(st == json{{"statusRegistered", 50}, {"statusUndiscoverable", 25}, {"statusUnregistered", 25}});
+    static NwdafSchemaValidator official(NWDAF_3GPP_OPENAPI_DIR);
+    REQUIRE(official.validate(st, "TS29520_Nnwdaf_EventsSubscription.yaml#/components/schemas/NfStatus").empty());
+}
+
+TEST_CASE("H1.9: failed polls add no status sample; polls older than the window drop out") {
+    MockNrf nrf;
+    nrf.instances = {{"AMF", {AMF_ID}}};
+    NwdafConfig cfg = discoveryConfig();
+    cfg.nrf_nf_status_window_seconds = 300;
+    ClockedMonitor monitor(cfg);
+    monitor.refresh();                                     // REGISTERED
+    nrf.list_status = 503;
+    monitor.t += std::chrono::seconds(60); monitor.refresh();   // failed: not "unregistered"
+    REQUIRE(statusOf(monitor.statuses(), AMF_ID) == json{{"statusRegistered", 100}});
+
+    nrf.list_status = 200;
+    nrf.instances.clear();
+    monitor.t += std::chrono::seconds(60); monitor.refresh();   // absent
+    REQUIRE(statusOf(monitor.statuses(), AMF_ID) ==
+            json{{"statusRegistered", 50}, {"statusUnregistered", 50}});
+
+    // Past the window, the instance is no longer reported at all.
+    monitor.t += std::chrono::seconds(400); monitor.refresh();
+    REQUIRE(statusOf(monitor.statuses(), AMF_ID).is_null());
+}
+
+TEST_CASE("H1.9: SUSPENDED counts towards the total only (I-8)") {
+    MockNrf nrf;
+    nrf.instances = {{"SMF", {SMF1_ID}}};
+    nrf.nf_status[SMF1_ID] = "SUSPENDED";
+    ClockedMonitor monitor(discoveryConfig());
+    monitor.refresh();
+    REQUIRE(monitor.statuses().empty());   // NfStatus has no attribute for SUSPENDED
+    nrf.nf_status.clear();
+    monitor.t += std::chrono::seconds(60); monitor.refresh();
+    REQUIRE(statusOf(monitor.statuses(), SMF1_ID) == json{{"statusRegistered", 50}});
+}
+
+TEST_CASE("H1.9: NF_LOAD reports the NRF status of the instances the NRF lists") {
+    MockNrf nrf;
+    nrf.instances = {{"SMF", {SMF1_ID}}};
+    NwdafConfig cfg = discoveryConfig();
+    cfg.openapi_3gpp_dir = NWDAF_3GPP_OPENAPI_DIR;
+    cfg.model_dir = "/tmp/nwdaf_nrf_models";
+    auto monitor = std::make_shared<NwdafNfMonitor>(cfg);
+    monitor->refresh();
+
+    MockNwdafCollector collector(cfg);   // no local measurements: NRF data only
+    NwdafAnalyticsEngine engine(collector, cfg);
+    NwdafSubscriptionStore subs;
+    NwdafSbiService sbi(engine, subs, cfg, monitor);
+    SbiRequest req;
+    req.method = "GET";
+    req.path = std::string(NwdafSbiService::ANALYTICS_INFO_ROOT) + "/analytics";
+    req.query = {{"event-id", "NF_LOAD"}, {"tgt-ue", R"({"anyUe":true})"}};
+    const SbiResponse res = sbi.dispatch(req);
+    INFO(res.body);
+    REQUIRE(res.status == 200);
+    const json body = json::parse(res.body);
+    static NwdafSchemaValidator official(NWDAF_3GPP_OPENAPI_DIR);
+    REQUIRE(official.validate(body, "TS29520_Nnwdaf_AnalyticsInfo.yaml#/components/schemas/AnalyticsData").empty());
+    REQUIRE(body["nfLoadLevelInfos"] == json::array({{{"nfType", "SMF"}, {"nfInstanceId", SMF1_ID},
+                                                      {"nfStatus", {{"statusRegistered", 100}}}}}));
 }

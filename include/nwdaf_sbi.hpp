@@ -2,7 +2,7 @@
 #include "nwdaf_3gpp_adapter.hpp"
 #include "nwdaf_analytics.hpp"
 #include "nwdaf_config.hpp"
-#include "nwdaf_nf_id_resolver.hpp"
+#include "nwdaf_nf_monitor.hpp"
 #include "nwdaf_schema_validator.hpp"
 #include "nwdaf_subscription.hpp"
 #include "nwdaf_supported_features.hpp"
@@ -50,11 +50,12 @@ public:
     static constexpr const char* ANALYTICS_INFO_ROOT     = "/nnwdaf-analyticsinfo/v1";
     static constexpr const char* EVENTS_SUBSCRIPTION_ROOT = "/nnwdaf-eventssubscription/v1";
 
-    // `resolver` supplies NF instance IDs (H1.9); null = the configured map only.
+    // `nf_monitor` supplies NF instance IDs and NRF status (H1.9); null = the
+    // configured IDs only.
     NwdafSbiService(NwdafAnalyticsEngine& engine,
                     NwdafSubscriptionStore& subs,
                     const NwdafConfig& config,
-                    std::shared_ptr<NwdafNfIdResolver> resolver = nullptr);
+                    std::shared_ptr<NwdafNfMonitor> nf_monitor = nullptr);
 
     // True when `path` names one of this service's resources.
     static bool handles(const std::string& path);
@@ -119,6 +120,7 @@ public:
     static std::optional<nlohmann::json> eventReport(const nlohmann::json& event_subscription,
                                                      const std::vector<NfMetric>& metrics,
                                                      const std::map<std::string, std::string>& nf_instance_ids,
+                                                     const std::vector<NwdafNfStatusObservation>& statuses,
                                                      const NwdafConfig& config);
 
 private:
@@ -130,6 +132,6 @@ private:
     NwdafSubscriptionStore& subs_;
     NwdafConfig             config_;
     NwdafSchemaValidator    validator_;
-    std::shared_ptr<NwdafNfIdResolver> resolver_;
+    std::shared_ptr<NwdafNfMonitor> nf_monitor_;
     bool                    available_ = false;
 };

@@ -1,5 +1,6 @@
 #pragma once
 #include "nwdaf_config.hpp"
+#include "nwdaf_prometheus.hpp"
 #include "ml/ewma_predictor.hpp"
 #include <string>
 #include <vector>
@@ -14,6 +15,7 @@
 #include <chrono>
 #include <functional>
 #include <unordered_set>
+#include <optional>
 
 #ifdef NWDAF_HAS_MONGODB
 #include <mongocxx/client.hpp>
@@ -59,6 +61,21 @@ struct NfMetric {
     std::string load_label;
 };
 
+// H1.1: one NF's Prometheus metrics endpoint (OAM input).
+struct NwdafOamSource {
+    std::string nf_type;
+    std::string endpoint;
+    bool        up = false;   // the last scrape succeeded
+    std::chrono::system_clock::time_point last_success{};   // epoch = never
+    std::vector<NwdafPromSample> samples;                    // of the last success
+};
+
+// H1.1: one successful scrape, kept for statistics over a time window.
+struct NwdafOamScrape {
+    std::chrono::system_clock::time_point at;
+    std::vector<NwdafPromSample> samples;
+};
+
 class NwdafCollector {
 public:
     explicit NwdafCollector(const NwdafConfig& config);
@@ -71,6 +88,8 @@ public:
     // out to systemctl, which is unavailable in a test environment.
     virtual std::vector<NfMetric> collectNfLoad();
     int                        getSubscriberCount();
+    // H1.1: scrape every configured oam_metrics_endpoints entry once.
+    std::vector<NwdafOamSource> collectOamMetrics();
 
     void startBackgroundCollection();
     void stopBackgroundCollection();
@@ -82,6 +101,10 @@ public:
     std::vector<SmfEvent>         getRecentSmfEvents(int n = 100) const;
     std::vector<ThroughputSample> getThroughputHistory(int n = 60) const;
     std::vector<NfMetric>         getCachedNfMetrics() const;
+    // H1.1: the configured metrics endpoints as last scraped by bgLoop, and
+    // the successful scrapes of one NF type (at most throughput_history_size).
+    std::vector<NwdafOamSource>   getOamSources() const;
+    std::vector<NwdafOamScrape>   getOamHistory(const std::string& nf_type) const;
 
     // BUG-02: EWMA predictions updated by bgLoop, read-only for analytics
     double getDlEwmaPrediction() const;
@@ -96,6 +119,8 @@ protected:
     virtual long                     readProcMemKb(int pid);
     virtual std::pair<uint64_t,uint64_t> readNetStats(const std::string& iface);
     virtual int                      querySubscriberCountFromMongo();
+    // H1.1: body of an HTTP GET of a metrics endpoint; nullopt on failure.
+    virtual std::optional<std::string> readOamMetrics(const std::string& url);
 
     // BUG-01: injectable clock for testability
     virtual std::chrono::steady_clock::time_point getCpuNow() const;
@@ -118,6 +143,8 @@ private:
     std::deque<SmfEvent>         smf_events_;
     std::deque<ThroughputSample> throughput_history_;
     std::vector<NfMetric>        nf_metrics_;
+    std::map<std::string, NwdafOamSource>             oam_sources_;   // H1.1
+    std::map<std::string, std::deque<NwdafOamScrape>> oam_history_;   // H1.1
 
     // BUG-01: per-PID CPU snapshot for delta computation
     struct CpuSnapshot {

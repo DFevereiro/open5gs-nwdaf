@@ -342,6 +342,20 @@ components:
             (TS 29.500 §5.2); `dev-legacy` when they are HTTP/1.1 only, which
             is explicitly transport non-compliant.
           enum: [rel18-sbi, dev-legacy]
+        oamSources:
+          description: |
+            H1.1: the NFs' Prometheus metrics endpoints (`oam_metrics_endpoints`),
+            scraped every collection interval as OAM input.
+          type: array
+          items:
+            type: object
+            required: [nfType, endpoint, up, samples]
+            properties:
+              nfType:      { type: string }
+              endpoint:    { type: string }
+              up:          { type: boolean, description: The last scrape succeeded. }
+              samples:     { type: integer, description: Samples in the last successful scrape. }
+              lastSuccess: { type: string, description: Time of the last successful scrape. }
         nfProfile:
           type: object
           required: [nfType, nfInstanceId, nwdafInfo]

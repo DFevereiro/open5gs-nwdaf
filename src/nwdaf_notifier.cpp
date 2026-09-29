@@ -34,9 +34,9 @@ NwdafNotifier::NwdafNotifier(NwdafSubscriptionStore& subs,
                               std::atomic<uint64_t>*  notif_total,
                               std::atomic<uint64_t>*  notif_failures,
                               const NwdafConfig&      config,
-                              std::shared_ptr<NwdafNfIdResolver> resolver)
+                              std::shared_ptr<NwdafNfMonitor> nf_monitor)
     : config_(config),
-      resolver_(resolver ? std::move(resolver) : std::make_shared<NwdafNfIdResolver>(config)),
+      nf_monitor_(nf_monitor ? std::move(nf_monitor) : std::make_shared<NwdafNfMonitor>(config)),
       subs_(subs), engine_(engine), poll_interval_s_(poll_interval_seconds),
       notif_total_(notif_total), notif_failures_(notif_failures)
 {}
@@ -170,7 +170,8 @@ void NwdafNotifier::deliverRel18(const Subscription& sub) {
     const bool one_time = evt_req.value("notifMethod", std::string()) == "ONE_TIME";
     const auto now = std::chrono::steady_clock::now();
     const auto metrics = engine_.getCurrentNfMetrics();
-    const auto ids = resolver_->ids();
+    const auto ids = nf_monitor_->ids();
+    const auto statuses = nf_monitor_->statuses();
 
     json reports = json::array();
     std::vector<std::string> due_keys;
@@ -189,7 +190,7 @@ void NwdafNotifier::deliverRel18(const Subscription& sub) {
         }
         // No data now → nothing to report for this event (failNotifyCode
         // UNAVAILABLE_DATA needs StatisticsFailure, which is not supported).
-        if (auto r = NwdafSbiService::eventReport(es, metrics, ids, config_)) {
+        if (auto r = NwdafSbiService::eventReport(es, metrics, ids, statuses, config_)) {
             reports.push_back(*r);
             due_keys.push_back(key);
         }

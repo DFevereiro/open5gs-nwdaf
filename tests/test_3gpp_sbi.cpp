@@ -394,7 +394,8 @@ TEST_CASE("H1.7: NF_LOAD is served when nf_instance_ids is configured") {
     REQUIRE(infos[0]["nfCpuUsage"] == 22);
     REQUIRE(infos[1]["nfType"] == "UPF");
     REQUIRE(infos[1]["nfCpuUsage"] == 41);
-    // Registration status is not observed, so it is not claimed.
+    // Without NRF polling (nrf_nf_discovery) NRF status is not observed, so
+    // it is not claimed.
     REQUIRE_FALSE(infos[0].contains("nfStatus"));
     REQUIRE(body.contains("timeStampGen"));
     REQUIRE(body.contains("expiry"));

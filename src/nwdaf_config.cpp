@@ -54,6 +54,10 @@ NwdafConfig NwdafConfig::load(const std::string& yaml_path) {
     cfg.nrf_nf_discovery = n["nrf_nf_discovery"] ? n["nrf_nf_discovery"].as<bool>() : false;
     cfg.nrf_nf_discovery_interval_seconds = n["nrf_nf_discovery_interval_seconds"]
         ? n["nrf_nf_discovery_interval_seconds"].as<int>() : 60;
+    cfg.nrf_nf_status_window_seconds = n["nrf_nf_status_window_seconds"]
+        ? n["nrf_nf_status_window_seconds"].as<int>() : 3600;
+    if (cfg.nrf_nf_discovery_interval_seconds <= 0 || cfg.nrf_nf_status_window_seconds <= 0)
+        throw std::runtime_error("nrf_nf_discovery_interval_seconds and nrf_nf_status_window_seconds must be positive");
 
     // H1.7: NF instance IDs of the monitored NFs (Open5GS deployment mechanism
     // until NRF discovery, H1.9). Keys must be monitored NF types.
@@ -67,6 +71,17 @@ NwdafConfig NwdafConfig::load(const std::string& yaml_path) {
             if (!is_valid_uuid(id))
                 throw std::runtime_error("nf_instance_ids: " + type + " is not a valid UUID: " + id);
             cfg.nf_instance_ids[type] = id;
+        }
+    }
+
+    // H1.1: Prometheus metrics endpoints of the NFs (OAM input).
+    if (n["oam_metrics_endpoints"]) {
+        for (const auto& kv : n["oam_metrics_endpoints"]) {
+            const std::string type = kv.first.as<std::string>();
+            const std::string url  = kv.second.as<std::string>();
+            if (url.rfind("http://", 0) != 0 && url.rfind("https://", 0) != 0)
+                throw std::runtime_error("oam_metrics_endpoints: " + type + " is not an http(s) URL: " + url);
+            cfg.oam_metrics_endpoints[type] = url;
         }
     }
 

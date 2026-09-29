@@ -30,10 +30,13 @@ nwdaf:
   #   AMF: "<amf nfInstanceId>"
   #   SMF: "<smf nfInstanceId>"
   #   UPF: "<upf nfInstanceId>"
-  # Or discover them from the NRF (types without a configured ID; used only
-  # when exactly one instance of the type is registered):
+  # Or poll the NRF (NFListRetrieval + NFProfileRetrieval) every interval:
+  # resolves the types without a configured ID (only when exactly one instance
+  # of the type is registered) and reports each NF's NRF status (nfStatus)
+  # over the status window.
   nrf_nf_discovery: false
   nrf_nf_discovery_interval_seconds: 60
+  nrf_nf_status_window_seconds: 3600
 
   # Data collection — UPF tunnel interfaces for throughput measurement
   # gtp5g bypasses user-space capture; read /sys/class/net directly
@@ -42,6 +45,16 @@ nwdaf:
     - "ens4"
   throughput_history_size: 360      # 1 hour at 10s interval
   collection_interval_seconds: 10
+
+  # OAM input: the NFs' Prometheus metrics endpoints (TS 28.552 measurement
+  # names), scraped every collection interval. These are the Open5GS v2.8.0
+  # defaults (metrics.server in each NF's YAML); they listen on loopback, so
+  # a remote NWDAF needs the NFs' metrics address changed.
+  # oam_metrics_endpoints:
+  #   AMF: "http://127.0.0.5:9090/metrics"
+  #   SMF: "http://127.0.0.4:9090/metrics"
+  #   UPF: "http://127.0.0.7:9090/metrics"
+  #   PCF: "http://127.0.0.13:9090/metrics"
 
   # AMF journald log parsing — Open5GS v2.7.6 uses "imsi-XXXXXXXXXXXXXXX"
   # Adjust supi_regex for earlier versions if needed

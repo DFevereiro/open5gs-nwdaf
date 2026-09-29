@@ -35,7 +35,7 @@ Last updated **2026-08-23** (release `v1.1.0`).
 
 | Item | Issue | Status |
 |---|---|---|
-| H1.1 — Pluggable `IDataSource` ingestion | [#23](https://github.com/cem8kaya/open5gs-nwdaf/issues/23) | Not started · *adjusted for Rel-18 (§3a)*. Open5GS v2.8.0 implements no event-exposure service, so the SBI backend targets other cores; scraping stays the Open5GS path |
+| H1.1 — Pluggable `IDataSource` ingestion | [#23](https://github.com/cem8kaya/open5gs-nwdaf/issues/23) | **Partial**: OAM input from the NFs' Prometheus metrics endpoints (TS 28.552 names) landed 2026-09-29 (`oam_metrics_endpoints`) · *adjusted for Rel-18 (§3a)*. Open5GS v2.8.0 implements no event-exposure service, so the SBI backend targets other cores; scraping stays the Open5GS path |
 | H1.2 — Slice awareness + `SLICE_LOAD_LEVEL` | [#24](https://github.com/cem8kaya/open5gs-nwdaf/issues/24) | Not started · *adjusted for Rel-18 (§3a)* |
 | H1.3 — PFCP usage reporting | [#25](https://github.com/cem8kaya/open5gs-nwdaf/issues/25) | **On hold**: feasibility checked 2026-09-28 (§H1.3) — Open5GS reports only downlink volume per 100 MiB, to the SMF |
 | H1.4 — Rel-17/18 catalogue | [#26](https://github.com/cem8kaya/open5gs-nwdaf/issues/26) | **Partial**: `SM_CONGESTION`, `REDUNDANT_TRANSMISSION` (Rel-18 name `RED_TRANS_EXP`) and `DISPERSION` shipped; `DN_PERFORMANCE`, `USER_DATA_CONGESTION` and `WLAN_PERFORMANCE` are blocked on H1.1–H1.3 · *adjusted for Rel-18 (§3a)* |
@@ -43,7 +43,7 @@ Last updated **2026-08-23** (release `v1.1.0`).
 | H1.6 — OpenAPI 3.0 + conformance in CI | [#28](https://github.com/cem8kaya/open5gs-nwdaf/issues/28) | **Done** for the operator API · *extended for Rel-18: official-schema conformance (§3a)* |
 | H1.7 — 3GPP Nnwdaf SBI conformance (Rel-18) | — | **Done for the M1 scope**: 3GPP resources, official-schema validation, supported features, failure semantics, and NF_LOAD with subscriptions and notifications. Further IDs are added here as their inputs allow |
 | H1.8 — HTTP/2 SBI transport + compliance profile | — | **Done**: nghttp2 server and libcurl client, the rel18-sbi and dev-legacy profiles, CI over HTTP/2; validated against the Open5GS v2.8.0 NRF |
-| H1.9 — Truthful Rel-18 NRF profile, lifecycle, discovery | — | **Done**: truthful profile, NFRegister, heartbeat with `404` re-registration, NFDeregister and NF discovery, all validated against the Open5GS v2.8.0 NRF |
+| H1.9 — Truthful Rel-18 NRF profile, lifecycle, discovery | — | **Done**: truthful profile, NFRegister, heartbeat with `404` re-registration, NFDeregister, and NF instance IDs plus NF_LOAD `nfStatus` from NRF list/profile retrieval, all validated against the Open5GS v2.8.0 NRF. (NFDiscover was replaced on 2026-09-29: Open5GS NFs don't allow NWDAF, so the NRF hides them from it.) |
 | H1.10 — SBI security: mTLS, OAuth2 token validation, NRF client TLS | — | **Done**: mTLS on both listeners; OAuth 2.0 access-token validation per TS 33.501 §13.4.1 with pluggable key sources. Open5GS doesn't implement OAuth 2.0, so it stays off there. |
 | **M1 — Rel-18 supported-scope compliance gate** | — | **Passed 2026-09-28**. Scope: both Nnwdaf services with NF_LOAD, HTTP/2, the NRF lifecycle and discovery, mTLS and OAuth2 ([`3gpp-rel18-compliance.md`](3gpp-rel18-compliance.md)) |
 | H2.x — MLOps platform | [#29](https://github.com/cem8kaya/open5gs-nwdaf/issues/29)–[#35](https://github.com/cem8kaya/open5gs-nwdaf/issues/35) | Not started |
@@ -132,6 +132,8 @@ The single biggest realism gap is that collection is log scraping. Introduce a p
 
 - **Backend A (keep):** the current journald/procfs collector — the zero-friction Open5GS default.
 - **Backend B (new):** an **event-exposure consumer** that subscribes to `Namf_EventExposure`, `Nsmf_EventExposure`, and `Nupf`/`N4 PFCP` usage reports, plus **OAM Management Services (MnS)** performance measurements (TS 28.532/28.550). This is what a production NWDAF actually consumes and it unlocks per-session data (see H1.3).
+
+**Landed 2026-09-29 — OAM input from Open5GS metrics endpoints.** Open5GS v2.8.0 NFs serve TS 28.552-named measurements on a Prometheus endpoint (on by default), including per-slice counts: `fivegs_amffunction_rm_registeredsubnbr{snssai}` and `fivegs_smffunction_sm_sessionnbr{snssai}`. The collector scrapes each `oam_metrics_endpoints` entry every collection interval and keeps a bounded history of successful scrapes (`NwdafCollector::getOamHistory`). TS 23.288 V18.13.0 lists these per-slice TS 28.552 counts as OAM input for slice load (Table 6.3.2A-1), so this is the input for H1.2.
 
 *Deliverable:* `include/nwdaf_datasource.hpp` abstraction; config switch `collection_mode: [scrape|sbi]`; feature parity tests via the existing mock core.
 
@@ -243,7 +245,10 @@ M1 passes.
   - Deregister on shutdown, and re-register when a heartbeat gets 404.
   - Send an explicit NFUpdate when a genuine capability change alters the
     advertised set.
-  - Use `Nnrf_NFDiscovery` for NF instance IDs.
+  - Resolve NF instance IDs from the NRF. Implemented with NFListRetrieval
+    and NFProfileRetrieval, not `Nnrf_NFDiscovery`: the NRF filters NFDiscover
+    by `allowedNfTypes`, and no Open5GS NF allows NWDAF. The same polls give
+    NF_LOAD `nfStatus` (TS 23.288 §6.5.2: NF status from the NRF).
 - **H1.10 — SBI security.**
   - Wire up mTLS.
   - Validate OAuth2 access tokens per TS 33.501 and TS 29.510. The standards

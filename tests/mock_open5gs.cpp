@@ -68,6 +68,17 @@ int MockNwdafCollector::querySubscriberCountFromMongo() {
     return mock_subscriber_count_;
 }
 
+void MockNwdafCollector::setOamMetrics(const std::string& url, std::optional<std::string> body) {
+    std::lock_guard<std::mutex> lk(mock_mutex_);
+    mock_oam_metrics_[url] = std::move(body);
+}
+
+std::optional<std::string> MockNwdafCollector::readOamMetrics(const std::string& url) {
+    std::lock_guard<std::mutex> lk(mock_mutex_);
+    const auto it = mock_oam_metrics_.find(url);
+    return it == mock_oam_metrics_.end() ? std::nullopt : it->second;
+}
+
 // BUG-01: injectable clock
 void MockNwdafCollector::setMockCpuTime(std::chrono::steady_clock::time_point t) {
     mock_cpu_now_ = t;

@@ -14,9 +14,9 @@
 NwdafServer::NwdafServer(NwdafAnalyticsEngine& engine,
                          NwdafSubscriptionStore& subs,
                          const NwdafConfig& config,
-                         std::shared_ptr<NwdafNfIdResolver> resolver)
+                         std::shared_ptr<NwdafNfMonitor> nf_monitor)
     : engine_(engine), subs_(subs), config_(config),
-      sbi_(engine, subs, config, std::move(resolver)),
+      sbi_(engine, subs, config, std::move(nf_monitor)),
 #ifdef NWDAF_USE_TLS
       oauth_schema_(config.openapi_3gpp_dir),
 #endif
@@ -76,15 +76,16 @@ static json errorResponse(int status, const std::string& title, const std::strin
     };
 }
 
-static std::string nowISO() {
-    auto now = std::chrono::system_clock::now();
-    auto t = std::chrono::system_clock::to_time_t(now);
+static std::string isoTime(std::chrono::system_clock::time_point tp) {
+    auto t = std::chrono::system_clock::to_time_t(tp);
     struct tm tm_buf;
     gmtime_r(&t, &tm_buf);
     char buf[32];
     strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm_buf);
     return buf;
 }
+
+static std::string nowISO() { return isoTime(std::chrono::system_clock::now()); }
 
 // PROD-05: generate an 8-hex-char short request ID when the caller sends none
 static std::string generateShortId() {
@@ -399,6 +400,18 @@ void NwdafServer::handleHealth(const httplib::Request& req, httplib::Response& r
         {"ts",           nowISO()},
         // H1.8: rel18-sbi (HTTP/2) or dev-legacy (transport non-compliant).
         {"sbiTransportProfile", transportProfile(config_)},
+        // H1.1: the NFs' Prometheus metrics endpoints (OAM input).
+        {"oamSources", [&] {
+            json out = json::array();
+            for (const auto& src : engine_.getOamSources()) {
+                json s = {{"nfType", src.nf_type}, {"endpoint", src.endpoint},
+                          {"up", src.up}, {"samples", src.samples.size()}};
+                if (src.last_success.time_since_epoch().count() != 0)
+                    s["lastSuccess"] = isoTime(src.last_success);
+                out.push_back(s);
+            }
+            return out;
+        }()},
         {"nfProfile", {
             {"nfType",       "NWDAF"},
             {"nfInstanceId", config_.nf_instance_id},

@@ -31,7 +31,7 @@ public:
     NwdafServer(NwdafAnalyticsEngine& engine,
                 NwdafSubscriptionStore& subs,
                 const NwdafConfig& config,
-                std::shared_ptr<NwdafNfIdResolver> resolver = nullptr);   // H1.9
+                std::shared_ptr<NwdafNfMonitor> nf_monitor = nullptr);   // H1.9
 
     void start();
     void stop();

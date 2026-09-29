@@ -26,11 +26,19 @@ public:
     // deployment mechanism until NRF discovery (H1.9) supplies the IDs; NF_LOAD
     // is advertised on the 3GPP interfaces only when this map is configured.
     std::map<std::string, std::string> nf_instance_ids;
-    // H1.9: resolve the IDs not configured above through NRF NF discovery
-    // (TS 29.510 Nnrf_NFDiscovery), refreshed every interval.
+    // H1.9: poll the NRF every interval (TS 29.510 NFListRetrieval and
+    // NFProfileRetrieval) to resolve the IDs not configured above and to
+    // observe each NF's NRF status.
     bool nrf_nf_discovery = false;
     int  nrf_nf_discovery_interval_seconds = 60;
+    // H1.9: window over which NF_LOAD nfStatus is computed from those polls
+    // (TS 29.520 NfStatus, I-8).
+    int  nrf_nf_status_window_seconds = 3600;
     std::vector<std::string> throughput_interfaces;
+    // H1.1: NF type → URL of the NF's Prometheus metrics endpoint (Open5GS
+    // `metrics.server`), scraped every collection interval as OAM input: the
+    // measurements carry TS 28.552 names. Empty = no scraping.
+    std::map<std::string, std::string> oam_metrics_endpoints;
     int    throughput_history_size      = 360;
     int    collection_interval_seconds  = 10;
     int    amf_journal_lines            = 500;

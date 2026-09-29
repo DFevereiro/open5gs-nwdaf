@@ -1,4 +1,5 @@
 #include "nwdaf_collector.hpp"
+#include <httplib.h>
 #include <spdlog/spdlog.h>
 #include <fstream>
 #include <sstream>
@@ -454,6 +455,63 @@ int NwdafCollector::getSubscriberCount() {
     return querySubscriberCountFromMongo();
 }
 
+// ── H1.1: Prometheus metrics endpoints (OAM input) ───────────────────────────
+
+std::optional<std::string> NwdafCollector::readOamMetrics(const std::string& url) {
+    // "scheme://host[:port]" for the client, the rest as the path.
+    const size_t authority = url.find("://");
+    if (authority == std::string::npos) return std::nullopt;
+    const size_t slash = url.find('/', authority + 3);
+    const std::string base = url.substr(0, slash);
+    const std::string path = slash == std::string::npos ? "/" : url.substr(slash);
+    httplib::Client cli(base);
+    if (!cli.is_valid()) return std::nullopt;
+    cli.set_connection_timeout(2);
+    cli.set_read_timeout(3);
+    auto res = cli.Get(path);
+    if (!res || res->status != 200) return std::nullopt;
+    return res->body;
+}
+
+std::vector<NwdafOamSource> NwdafCollector::collectOamMetrics() {
+    std::vector<NwdafOamSource> out;
+    for (const auto& [type, url] : config_.oam_metrics_endpoints) {
+        NwdafOamSource src;
+        src.nf_type  = type;
+        src.endpoint = url;
+        if (auto body = readOamMetrics(url)) {
+            src.up           = true;
+            src.last_success = std::chrono::system_clock::now();
+            src.samples      = NwdafPrometheusText::parse(*body);
+        } else {
+            spdlog::debug("H1.1: metrics endpoint of {} unreachable ({})", type, url);
+        }
+        out.push_back(std::move(src));
+    }
+    return out;
+}
+
+std::vector<NwdafOamSource> NwdafCollector::getOamSources() const {
+    std::lock_guard<std::mutex> lk(mutex_);
+    std::vector<NwdafOamSource> out;
+    for (const auto& [type, url] : config_.oam_metrics_endpoints) {
+        const auto it = oam_sources_.find(type);
+        if (it != oam_sources_.end()) { out.push_back(it->second); continue; }
+        NwdafOamSource never;   // not scraped yet
+        never.nf_type  = type;
+        never.endpoint = url;
+        out.push_back(never);
+    }
+    return out;
+}
+
+std::vector<NwdafOamScrape> NwdafCollector::getOamHistory(const std::string& nf_type) const {
+    std::lock_guard<std::mutex> lk(mutex_);
+    const auto it = oam_history_.find(nf_type);
+    if (it == oam_history_.end()) return {};
+    return {it->second.begin(), it->second.end()};
+}
+
 // ── PROD-01: SQLite throughput history persistence ────────────────────────────
 
 #ifdef NWDAF_HAS_SQLITE
@@ -569,6 +627,7 @@ void NwdafCollector::bgLoop() {
             auto amf = collectAmfEvents();
             auto smf = collectSmfEvents();
             auto nf  = collectNfLoad();
+            auto oam = collectOamMetrics();
 
             {
                 std::lock_guard<std::mutex> lk(mutex_);
@@ -592,6 +651,21 @@ void NwdafCollector::bgLoop() {
                     }
                 }
                 nf_metrics_ = nf;
+                // H1.1: a failed scrape keeps the last samples, marked down;
+                // only successful scrapes enter the history.
+                for (auto& src : oam) {
+                    NwdafOamSource& cur = oam_sources_[src.nf_type];
+                    if (!src.up) {
+                        cur.nf_type  = src.nf_type;
+                        cur.endpoint = src.endpoint;
+                        cur.up       = false;
+                        continue;
+                    }
+                    auto& hist = oam_history_[src.nf_type];
+                    hist.push_back({src.last_success, src.samples});
+                    while ((int)hist.size() > config_.throughput_history_size) hist.pop_front();
+                    cur = std::move(src);
+                }
                 // BUG-02: update EWMA exactly once per collection interval here,
                 // never in the analytics read path.
                 dl_ewma_.update(tp.total_dl_kbps);
