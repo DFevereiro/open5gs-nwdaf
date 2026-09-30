@@ -129,8 +129,6 @@ H1.1–H1.3 for the work that lifts those limits.
 
 IDs are spelled as in the Rel-18 `NwdafEvent` enum. The operator API still accepts the legacy spellings `QoS_SUSTAINABILITY` and `REDUNDANT_TRANSMISSION` on input.
 
-**Referenced specifications (Rel-17 baseline of the current implementation):** TS 23.288 v17.3.0 (architecture) · TS 29.520 v17.7.0 (Nnwdaf services) · TS 29.510 v17.6.0 (NRF) · TS 28.554 v17.4.0 (KPIs) · TS 33.501 (security)
-
 **Release 18.** The frozen Rel-18 baseline is [`docs/frozen-standards.md`](docs/frozen-standards.md), and the gap analysis is [`docs/3gpp-rel18-compliance.md`](docs/3gpp-rel18-compliance.md). Milestone **M1 passed** (2026-09-28): the NWDAF is **Release 18 compliant for the supported scope**, in builds with the `rel18-sbi` profile (HTTP/2 + TLS). The Rel-18 3GPP interfaces serve **NF_LOAD**, and **SLICE_LOAD_LEVEL** and **NSI_LOAD_LEVEL** for slices with a configured capacity (load level per interpretation I-9). The other analytics listed above are served on the operator API; their Rel-18 forms are not yet advertised, because they need inputs the scraped data path lacks. Open5GS v2.8.0 exposes no NF event-exposure services and no OAuth 2.0 (see the compliance doc).
 
 ### OpenAPI contract
@@ -267,7 +265,7 @@ Base URL: `http://<host>:7779`
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/nnwdaf-analyticsinfo/v1/analytics?event-id=…&tgt-ue=…` | `Nnwdaf_AnalyticsInfo`. `NF_LOAD`, when `nf_instance_ids` or `nrf_nf_discovery` is configured; `LOAD_LEVEL_INFORMATION` (slice load level) and `NSI_LOAD_LEVEL`, when `slice_capacity` is configured. |
-| `POST` | `/nnwdaf-eventssubscription/v1/subscriptions` | `Nnwdaf_EventsSubscription` Subscribe. Returns `201` + `Location`. |
+| `POST` | `/nnwdaf-eventssubscription/v1/subscriptions` | `Nnwdaf_EventsSubscription` Subscribe. Returns `201` + `Location`. Reporting: PERIODIC, ONE_TIME, and THRESHOLD / ON_EVENT_DETECTION on `nfLoadLvlThds` (CPU), `loadLevelThreshold` and `nsiLevelThrds` (interpretation I-10). |
 | `PUT` / `DELETE` | `/nnwdaf-eventssubscription/v1/subscriptions/{subscriptionId}` | Modify / Unsubscribe |
 
 These are served over **HTTP/2** on `sbi_h2_port` (default 7780): h2c with prior knowledge, or h2 over TLS. For example, `curl --http2-prior-knowledge "http://127.0.0.1:7780/nnwdaf-analyticsinfo/v1/analytics?event-id=NF_LOAD&tgt-ue=%7B%22anyUe%22%3Atrue%7D"`. Notifications are `NnwdafEventsSubscriptionNotification` bodies, sent over HTTP/2 with `3gpp-Sbi-Callback: Nnwdaf_EventsSubscription_Notify`.
@@ -386,14 +384,14 @@ and the [5G/6G enhancement plan project board](https://github.com/users/cem8kaya
 - [x] `DISPERSION`, `SM_CONGESTION`, `RED_TRANS_EXP` analytics ([#26](https://github.com/cem8kaya/open5gs-nwdaf/issues/26), partial)
 - [x] MOS / service-experience E-model upgrade ([#27](https://github.com/cem8kaya/open5gs-nwdaf/issues/27))
 - [x] OpenAPI 3.0 spec published + CI conformance test ([#28](https://github.com/cem8kaya/open5gs-nwdaf/issues/28))
-- [x] H1.7 — 3GPP Nnwdaf SBI conformance (Rel-18 resources, data types, failure semantics, supported features; NF_LOAD, with more IDs to follow)
+- [x] H1.7 — 3GPP Nnwdaf SBI conformance (Rel-18 resources, data types, failure semantics, supported features, PERIODIC / ONE_TIME / THRESHOLD reporting; NF_LOAD, SLICE_LOAD_LEVEL, NSI_LOAD_LEVEL)
 - [x] H1.8 — HTTP/2 SBI transport + compliance profile
-- [x] H1.9 — Truthful Rel-18 NRF profile, lifecycle and discovery
+- [x] H1.9 — Truthful Rel-18 NRF profile, lifecycle, and NF instance IDs / NF status from the NRF
 - [x] H1.10 — SBI security: mTLS, OAuth2 access-token validation, NRF client TLS
 - [x] **M1 — Rel-18 supported-scope compliance gate** (passed 2026-09-28). See [`docs/3gpp-rel18-compliance.md`](docs/3gpp-rel18-compliance.md)
-- [ ] Pluggable `IDataSource` ingestion — SBI / OAM backend ([#23](https://github.com/cem8kaya/open5gs-nwdaf/issues/23))
-- [ ] Slice awareness (S-NSSAI) + `SLICE_LOAD_LEVEL` (TS 23.288 §6.3) ([#24](https://github.com/cem8kaya/open5gs-nwdaf/issues/24))
-- [ ] PFCP usage reporting → per-UE / per-session analytics ([#25](https://github.com/cem8kaya/open5gs-nwdaf/issues/25))
+- [ ] Pluggable `IDataSource` ingestion — SBI / OAM backend ([#23](https://github.com/cem8kaya/open5gs-nwdaf/issues/23); partial: OAM input from the NFs' metrics endpoints)
+- [ ] Slice awareness (S-NSSAI) + `SLICE_LOAD_LEVEL` (TS 23.288 §6.3) ([#24](https://github.com/cem8kaya/open5gs-nwdaf/issues/24); partial: SLICE_LOAD_LEVEL / NSI_LOAD_LEVEL served, per-slice anomaly models open)
+- [ ] PFCP usage reporting → per-UE / per-session analytics ([#25](https://github.com/cem8kaya/open5gs-nwdaf/issues/25); on hold, see the enhancement plan)
 - [ ] `DN_PERFORMANCE` (§6.14) and `USER_DATA_CONGESTION` (§6.8) — both blocked on the above input paths
 
 **Horizon 2 — Data & ML platform maturity** ([#21](https://github.com/cem8kaya/open5gs-nwdaf/issues/21))

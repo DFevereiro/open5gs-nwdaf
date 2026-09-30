@@ -149,6 +149,21 @@ cpp-httplib, which **requires OpenSSL ≥ 3.0**. Ubuntu 20.04 ships OpenSSL
 - **Ubuntu 20.04:** build with **`-DNWDAF_USE_TLS=OFF`** (all other features work).
 - **Ubuntu 22.04+ (OpenSSL 3.0):** TLS builds normally; install `libssl-dev`.
 
+### 3.3c HTTP/2 libraries (required by default)
+
+The 3GPP Nnwdaf interfaces are served over HTTP/2 (`NWDAF_USE_HTTP2`, **ON by
+default**), which needs nghttp2 and libcurl. Without them the configure step
+stops at `find_package(CURL REQUIRED)`:
+
+```bash
+sudo apt install -y libnghttp2-dev libcurl4-openssl-dev
+```
+
+`-DNWDAF_USE_HTTP2=OFF` builds without them, but that `dev-legacy` build can't
+register with an Open5GS NRF, which only accepts HTTP/2. The first configure
+also downloads the official 3GPP OpenAPI files (see the README), so it needs
+network access.
+
 ### 3.4 MongoDB C++ Driver (optional)
 
 MongoDB is used only for subscriber count (queries the `subscribers` collection

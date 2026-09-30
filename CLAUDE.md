@@ -110,7 +110,7 @@ IDs use the Rel-18 `NwdafEvent` spelling (`QOS_SUSTAINABILITY`, `RED_TRANS_EXP`)
 - `docs/frozen-standards.md` is the **immutable** spec baseline. It pins the official 3GPP OpenAPI artifacts (forge.3gpp.org `5G_APIs`, commit `d05657604fa1`) and records open baseline items B-1 and B-2. Never change the versions or the pin silently. A baseline change needs a dated amendment in that file.
 - `docs/3gpp-rel18-compliance.md` is the gap and status tracker.
   - A row may be marked **Compliant** only if it cites a passing test. `tests/test_compliance_doc.cpp` enforces this: every Compliant row must name existing `tests/*.cpp` files and `TEST_CASE` names (a trailing "…" is a prefix).
-  - **M1 passed on 2026-09-28.** The claim "Release 18 compliant for the supported scope" covers exactly the scope table at the top of the compliance doc: both Nnwdaf services with NF_LOAD, SLICE_LOAD_LEVEL and NSI_LOAD_LEVEL (the latter two only for configured `slice_capacity`, load level per I-9), HTTP/2, NRF lifecycle and discovery, mTLS and OAuth2, in the `rel18-sbi` build profile. Don't widen the claim without widening that table and its tests.
+  - **M1 passed on 2026-09-28.** The claim "Release 18 compliant for the supported scope" covers exactly the scope table at the top of the compliance doc: both Nnwdaf services with NF_LOAD, SLICE_LOAD_LEVEL and NSI_LOAD_LEVEL (the latter two only for configured `slice_capacity`, load level per I-9), HTTP/2, the NRF lifecycle with NF instance IDs and NF status from the NRF, mTLS and OAuth2, in the `rel18-sbi` build profile. Don't widen the claim without widening that table and its tests.
 - The work is sequenced as H1.7–H1.10, then M1, in `docs/ENHANCEMENT_PLAN_5G_6G.md`.
 - **Two SBI surfaces:**
   - `/nwdaf-analytics/v1/*` is the Open5GS **operator API** (dashboard, Prometheus). It is not a 3GPP interface; keep its behaviour stable.
@@ -120,7 +120,8 @@ IDs use the Rel-18 `NwdafEvent` spelling (`QOS_SUSTAINABILITY`, `RED_TRANS_EXP`)
   - `src/nwdaf_sbi.cpp` (`NwdafSbiService`) handles the 3GPP interfaces independently of the transport. Requests are checked in order: official schema, then the prose rules, then the capability table.
   - `src/nwdaf_schema_validator.cpp` validates against the official artifacts in `openapi_3gpp_dir`.
   - `src/nwdaf_supported_features.cpp` holds the TS 29.571 bitmask and the per-API TS 29.520 feature numbers. The same feature has different bit numbers in each API.
-  - Rules taken from the spec prose, and interpretations I-1..I-3, are pinned in the compliance doc's Appendix A. Cite them there instead of re-deriving them.
+  - Rules taken from the spec prose, and interpretations I-1..I-10, are pinned in the compliance doc's Appendix A. Cite them there instead of re-deriving them.
+  - THRESHOLD / ON_EVENT_DETECTION reporting lives in `NwdafSbiService::thresholdReports` (crossing detection, I-10); `NwdafNotifier` keeps the per-subscription baselines and advances them only after a successful delivery.
 - **Official YAML files:** `cmake/Nwdaf3gppOpenApi.cmake` downloads the 106 official YAML files at configure time from the pinned commit and verifies them against `cmake/3gpp_openapi_manifest.cmake`, so configure needs network access. Set `-DNWDAF_3GPP_OPENAPI_SOURCE_DIR=<dir>` for an offline copy; it is still hash-checked. The files are "All rights reserved", so never commit them.
 - **HTTP/2 (H1.8):**
   - The 3GPP interfaces are served by `NwdafH2Server` (nghttp2) on `sbi_h2_port` (7780). Port 7779 stays HTTP/1.1 for the operator API.
