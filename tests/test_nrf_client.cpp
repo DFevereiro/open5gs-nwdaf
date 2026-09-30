@@ -1,6 +1,7 @@
 // H1.9 — NRF NFManagement client (TS 29.510 V18.11.0) against a mock NRF.
 // The registered NFProfile is validated against the official schema.
 #include <catch2/catch_test_macros.hpp>
+#include "official_schema.hpp"
 #include "nwdaf_nrf_client.hpp"
 #include "nwdaf_nf_monitor.hpp"
 #include "nwdaf_analytics_catalogue.hpp"
@@ -112,11 +113,7 @@ static NwdafConfig nrfConfig() {
 }
 
 static void requireOfficialProfile(const json& profile) {
-    static NwdafSchemaValidator official(NWDAF_3GPP_OPENAPI_DIR);
-    auto v = official.validate(profile, "TS29510_Nnrf_NFManagement.yaml#/components/schemas/NFProfile");
-    INFO(profile.dump(2));
-    INFO((v.empty() ? std::string() : v.front().pointer + " " + v.front().reason));
-    REQUIRE(v.empty());
+    requireOfficialSchema(profile, "TS29510_Nnrf_NFManagement.yaml#/components/schemas/NFProfile");
 }
 
 TEST_CASE("H1.9: the NF profile is a valid Rel-18 NFProfile with both Nnwdaf services") {
@@ -311,8 +308,7 @@ TEST_CASE("H1.9: nfStatus is the share of NRF polls that found each state (I-8)"
 
     const json st = statusOf(monitor.statuses(), AMF_ID);
     REQUIRE(st == json{{"statusRegistered", 50}, {"statusUndiscoverable", 25}, {"statusUnregistered", 25}});
-    static NwdafSchemaValidator official(NWDAF_3GPP_OPENAPI_DIR);
-    REQUIRE(official.validate(st, "TS29520_Nnwdaf_EventsSubscription.yaml#/components/schemas/NfStatus").empty());
+    requireOfficialSchema(st, "TS29520_Nnwdaf_EventsSubscription.yaml#/components/schemas/NfStatus");
 }
 
 TEST_CASE("H1.9: failed polls add no status sample; polls older than the window drop out") {
@@ -370,8 +366,7 @@ TEST_CASE("H1.9: NF_LOAD reports the NRF status of the instances the NRF lists")
     INFO(res.body);
     REQUIRE(res.status == 200);
     const json body = json::parse(res.body);
-    static NwdafSchemaValidator official(NWDAF_3GPP_OPENAPI_DIR);
-    REQUIRE(official.validate(body, "TS29520_Nnwdaf_AnalyticsInfo.yaml#/components/schemas/AnalyticsData").empty());
+    requireOfficialSchema(body, "TS29520_Nnwdaf_AnalyticsInfo.yaml#/components/schemas/AnalyticsData");
     REQUIRE(body["nfLoadLevelInfos"] == json::array({{{"nfType", "SMF"}, {"nfInstanceId", SMF1_ID},
                                                       {"nfStatus", {{"statusRegistered", 100}}}}}));
 }

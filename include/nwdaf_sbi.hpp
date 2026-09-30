@@ -23,7 +23,7 @@
 //
 // Rules taken from the specification prose are pinned, with their clauses, in
 // docs/3gpp-rel18-compliance.md Appendix A; interpretations are recorded
-// there as I-1..I-3.
+// there as I-1..I-10.
 
 struct SbiRequest {
     std::string method;                              // "GET", "POST", ...
@@ -80,6 +80,8 @@ public:
     // and UTC offsets. nullopt when malformed.
     static std::optional<std::chrono::system_clock::time_point>
     parseDateTime(const std::string& s);
+    // TS 29.571 DateTime (RFC 3339, UTC, whole seconds).
+    static std::string formatDateTime(std::chrono::system_clock::time_point tp);
 
 private:
     SbiResponse getAnalytics(const SbiRequest& req);
@@ -147,7 +149,9 @@ public:
                                                     const NwdafReportInputs& in,
                                                     const NwdafConfig& config);
 
-    // Current measurements for event reports.
+    // Current measurements for event reports; the notifier gathers them the
+    // same way once per poll.
+    static NwdafReportInputs gatherInputs(const NwdafAnalyticsEngine& engine, const NwdafNfMonitor& nf_monitor);
     NwdafReportInputs inputs() const;
 
     // H1.7: THRESHOLD / ON_EVENT_DETECTION reporting (TS 29.520 V18.14.0
@@ -157,6 +161,10 @@ public:
     // notifMethod ON_EVENT_DETECTION, or the event's notificationMethod
     // THRESHOLD or omitted (its default).
     static bool thresholdMode(const nlohmann::json& evt_req, const nlohmann::json& event_subscription);
+    // The notification method in effect for one event: evtReq's notifMethod
+    // supersedes the event's own (§4.2.2.2.2 NOTE 1), whose default is
+    // THRESHOLD (Table 5.1.6.2.3-1 NOTE 2).
+    static std::string effectiveMethod(const nlohmann::json& evt_req, const nlohmann::json& event_subscription);
 
     // The event's reporting thresholds: nfLoadLvlThds (NF_LOAD, nfCpuUsage
     // only), loadLevelThreshold (SLICE_LOAD_LEVEL), nsiLevelThrds

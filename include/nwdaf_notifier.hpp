@@ -43,7 +43,7 @@ private:
     // 3gpp-Sbi-Callback header; per-event periods, ONE_TIME, THRESHOLD /
     // ON_EVENT_DETECTION crossings (I-10), maxReportNbr and monDur from the
     // stored representation.
-    void deliverRel18(const Subscription& sub);
+    void deliverRel18(const Subscription& sub, const NwdafReportInputs& in);
 
     NwdafConfig             config_;
     std::shared_ptr<NwdafNfMonitor> nf_monitor_;

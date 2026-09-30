@@ -76,16 +76,7 @@ static json errorResponse(int status, const std::string& title, const std::strin
     };
 }
 
-static std::string isoTime(std::chrono::system_clock::time_point tp) {
-    auto t = std::chrono::system_clock::to_time_t(tp);
-    struct tm tm_buf;
-    gmtime_r(&t, &tm_buf);
-    char buf[32];
-    strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm_buf);
-    return buf;
-}
-
-static std::string nowISO() { return isoTime(std::chrono::system_clock::now()); }
+static std::string nowISO() { return NwdafSbiService::formatDateTime(std::chrono::system_clock::now()); }
 
 // PROD-05: generate an 8-hex-char short request ID when the caller sends none
 static std::string generateShortId() {
@@ -407,7 +398,7 @@ void NwdafServer::handleHealth(const httplib::Request& req, httplib::Response& r
                 json s = {{"nfType", src.nf_type}, {"endpoint", src.endpoint},
                           {"up", src.up}, {"samples", src.samples.size()}};
                 if (src.last_success.time_since_epoch().count() != 0)
-                    s["lastSuccess"] = isoTime(src.last_success);
+                    s["lastSuccess"] = NwdafSbiService::formatDateTime(src.last_success);
                 out.push_back(s);
             }
             return out;

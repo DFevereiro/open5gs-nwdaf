@@ -1,6 +1,7 @@
 // H1.10 — access-token validation (TS 33.501 V18.12.0 §13.4.1.1.2 step 2;
 // TS 29.510 V18.11.0 AccessTokenClaims). Tokens are signed at runtime.
 #include <catch2/catch_test_macros.hpp>
+#include "official_schema.hpp"
 
 #ifdef NWDAF_USE_TLS
 #include "nwdaf_oauth.hpp"
@@ -26,8 +27,7 @@ static NwdafConfig oauthConfig() {
 static NwdafAccessTokenValidator validatorFor(const Key& key) {
     const std::string pem = "/tmp/nwdaf_oauth_test_pub.pem";
     key.writePublicPem(pem);
-    static NwdafSchemaValidator official(NWDAF_3GPP_OPENAPI_DIR);
-    return NwdafAccessTokenValidator(oauthConfig(), std::make_shared<NwdafPemKeyProvider>(pem), &official);
+    return NwdafAccessTokenValidator(oauthConfig(), std::make_shared<NwdafPemKeyProvider>(pem), &officialSchemas());
 }
 
 static NwdafTokenCheck::Outcome check(const NwdafAccessTokenValidator& v, const std::string& tok,

@@ -2,6 +2,7 @@
 // Open5GS (TS 23.288 V18.13.0 §6.3), load level per I-9, outputs checked
 // against the official TS 29.520 V18.14.0 schemas.
 #include <catch2/catch_test_macros.hpp>
+#include "official_schema.hpp"
 #include "mock_open5gs.hpp"
 #include "nwdaf_3gpp_adapter.hpp"
 #include "nwdaf_analytics.hpp"
@@ -143,17 +144,7 @@ TEST_CASE("H1.2: slice load IDs are advertised only with a configured slice capa
 
 // ── The 3GPP interfaces ─────────────────────────────────────────────────────
 
-static NwdafSchemaValidator& official() {
-    static NwdafSchemaValidator v(NWDAF_3GPP_OPENAPI_DIR);
-    return v;
-}
-
-static void requireSchema(const json& body, const std::string& ref) {
-    const auto v = official().validate(body, ref);
-    INFO(body.dump(2));
-    INFO((v.empty() ? std::string() : v.front().pointer + " " + v.front().reason));
-    REQUIRE(v.empty());
-}
+static void requireSchema(const json& body, const std::string& ref) { requireOfficialSchema(body, ref); }
 
 // A service over a mock collector that has scraped the NFs twice:
 // slice 1-000001: UEs 4 then 6 (of 10), PDU sessions 2 then 2 (of 20) → 50;

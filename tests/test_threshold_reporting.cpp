@@ -2,6 +2,7 @@
 // §4.2.2.2.2, Tables 5.1.6.2.3-1 and 5.1.6.3.12-1; TS 23.288 §6.1.3; I-10):
 // crossing detection per matching direction, and schema-valid notifications.
 #include <catch2/catch_test_macros.hpp>
+#include "official_schema.hpp"
 #include "nwdaf_sbi.hpp"
 #include "nwdaf_schema_validator.hpp"
 
@@ -12,11 +13,7 @@ using Svc = NwdafSbiService;
 static const char* AMF_ID = "11111111-1111-4111-8111-111111111111";
 
 static void requireNotification(const json& n) {
-    static NwdafSchemaValidator official(NWDAF_3GPP_OPENAPI_DIR);
-    const auto v = official.validate(n, "TS29520_Nnwdaf_EventsSubscription.yaml#/components/schemas/EventNotification");
-    INFO(n.dump(2));
-    INFO((v.empty() ? std::string() : v.front().pointer + " " + v.front().reason));
-    REQUIRE(v.empty());
+    requireOfficialSchema(n, "TS29520_Nnwdaf_EventsSubscription.yaml#/components/schemas/EventNotification");
 }
 
 TEST_CASE("H1.7: THRESHOLD is the default method; evtReq ON_EVENT_DETECTION selects it for every event") {

@@ -6,6 +6,7 @@
 #include <nlohmann/json.hpp>
 #include <chrono>
 #include <ctime>
+#include <optional>
 #include <set>
 
 using json = nlohmann::json;
@@ -75,10 +76,16 @@ void NwdafNotifier::deliveryLoop() {
                                                                          : threshold_state_.erase(it);
         }
 
+        // Rel-18 reports read the same measurements: gather them once per poll.
+        std::optional<NwdafReportInputs> rel18_inputs;
         for (const auto& sub : subs) {
             if (sub.status != "ACTIVE") continue;
             if (sub.notif_uri.empty())  continue;
-            if (sub.kind == "rel18") { deliverRel18(sub); continue; }
+            if (sub.kind == "rel18") {
+                if (!rel18_inputs) rel18_inputs = NwdafSbiService::gatherInputs(engine_, *nf_monitor_);
+                deliverRel18(sub, *rel18_inputs);
+                continue;
+            }
 
             std::chrono::steady_clock::time_point last;
             {
@@ -156,7 +163,7 @@ void NwdafNotifier::deliver(const Subscription& sub) {
     }
 }
 
-void NwdafNotifier::deliverRel18(const Subscription& sub) {
+void NwdafNotifier::deliverRel18(const Subscription& sub, const NwdafReportInputs& in) {
     json rep;
     try { rep = json::parse(sub.rel18_json); }
     catch (const json::parse_error&) {
@@ -180,12 +187,6 @@ void NwdafNotifier::deliverRel18(const Subscription& sub) {
     // events are evaluated on every poll (I-10).
     const bool one_time = evt_req.value("notifMethod", std::string()) == "ONE_TIME";
     const auto now = std::chrono::steady_clock::now();
-    NwdafReportInputs in;
-    in.metrics         = engine_.getCurrentNfMetrics();
-    in.nf_instance_ids = nf_monitor_->ids();
-    in.statuses        = nf_monitor_->statuses();
-    in.amf_oam         = engine_.getOamHistory("AMF");   // H1.2
-    in.smf_oam         = engine_.getOamHistory("SMF");
 
     json reports = json::array();
     std::vector<std::string> due_keys;

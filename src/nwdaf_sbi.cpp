@@ -69,16 +69,6 @@ bool onlyMissing(const std::vector<SchemaViolation>& v) {
     return true;
 }
 
-// TS 29.571 DateTime (RFC 3339, UTC).
-std::string formatDateTime(std::chrono::system_clock::time_point tp) {
-    const auto t = std::chrono::system_clock::to_time_t(tp);
-    struct tm tm_buf;
-    gmtime_r(&t, &tm_buf);
-    char buf[32];
-    strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm_buf);
-    return buf;
-}
-
 // TS 29.520 V18.14.0 §4.2.2.2.2 / §4.3.2.2: a target period starting in the
 // past and ending in the future requests both statistics and predictions.
 bool bothStatisticsAndPrediction(const json& req) {
@@ -87,6 +77,95 @@ bool bothStatisticsAndPrediction(const json& req) {
     auto end   = NwdafSbiService::parseDateTime(req["endTs"].get<std::string>());
     const auto now = std::chrono::system_clock::now();
     return start && end && *start < now && *end > now;
+}
+
+}  // namespace
+
+namespace {
+
+using Rejection = NwdafSbiService::Rejection;
+
+// Analytics output stamps: generated now, valid until the collectors next
+// refresh the measurements.
+json timeStamps(const NwdafConfig& config) {
+    const auto now = std::chrono::system_clock::now();
+    return {{"timeStampGen", NwdafSbiService::formatDateTime(now)},
+            {"expiry", NwdafSbiService::formatDateTime(
+                           now + std::chrono::seconds(config.collection_interval_seconds))}};
+}
+
+// Nnwdaf_AnalyticsInfo: the response to a rejected query (Appendix A.2, A.4).
+SbiResponse queryRejection(const Rejection& r, const NwdafFeatureSet& local) {
+    const json ip = json::array({invalidParam(r.where, r.reason)});
+    switch (r.kind) {
+    case Rejection::MandatoryMissing:
+        return problem(400, "MANDATORY_QUERY_PARAM_MISSING", r.reason, ip);
+    case Rejection::MandatoryIncorrect:
+        return problem(400, "MANDATORY_QUERY_PARAM_INCORRECT", r.reason, ip, local.toHex());
+    case Rejection::Unsupported:
+        return problem(400, "OPTIONAL_QUERY_PARAM_INCORRECT", r.reason, ip, local.toHex());
+    case Rejection::UnavailableData:   // §4.3.2.2: past statistics not held
+        return problem(500, "UNAVAILABLE_DATA", r.reason);
+    }
+    return problem(500, "SYSTEM_FAILURE", r.reason);
+}
+
+// Nnwdaf_EventsSubscription: the response that rejects the whole request, or
+// nullopt when only this event fails (I-3), which is added to `failed`.
+std::optional<SbiResponse> subscriptionRejection(const Rejection& r, const NwdafFeatureSet& local,
+                                                 const std::string& event, json& failed) {
+    const json ip = json::array({invalidParam(r.where, r.reason)});
+    switch (r.kind) {
+    case Rejection::MandatoryMissing:
+        return problem(400, "MANDATORY_IE_MISSING", r.reason, ip);
+    case Rejection::MandatoryIncorrect:
+        return problem(400, "MANDATORY_IE_INCORRECT", r.reason, ip, local.toHex());
+    case Rejection::Unsupported:
+        failed.push_back({{"event", event}, {"failureCode", "OTHER"}});
+        return std::nullopt;
+    case Rejection::UnavailableData:   // §4.2.2.2.2
+        return problem(500, "UNAVAILABLE_DATA", r.reason);
+    }
+    return std::nullopt;
+}
+
+const json* member(const json& j, const char* key) { return j.contains(key) ? &j[key] : nullptr; }
+
+// The queries of an accepted EventSubscription (validated when it was created).
+std::optional<Nwdaf3gppAdapter::NfLoadQuery> nfLoadQueryOf(const json& es) {
+    Nwdaf3gppAdapter::NfLoadQuery q;
+    if (NwdafSbiService::interpretNfLoad(member(es, "tgtUe"), "tgtUe", es, "",
+                                         member(es, "extraReportReq"), "extraReportReq", q))
+        return std::nullopt;
+    return q;
+}
+
+std::optional<Nwdaf3gppAdapter::SliceQuery> sliceQueryOf(const json& es) {
+    Nwdaf3gppAdapter::SliceQuery q;
+    if (NwdafSbiService::interpretSliceLoad(es.value("event", ""), &es, "",
+                                            member(es, "extraReportReq"), "extraReportReq", q))
+        return std::nullopt;
+    return q;
+}
+
+// EventNotifications for slice loads. EventNotification carries one
+// SliceLoadLevelInformation, whose single level applies to all its snssais,
+// so SLICE_LOAD_LEVEL gives one per distinct level; NSI_LOAD_LEVEL one in all.
+std::vector<json> sliceNotifications(const std::vector<NwdafSliceLoad>& loads, const json& head) {
+    std::vector<json> out;
+    if (loads.empty()) return out;
+    if (head["event"] == "NSI_LOAD_LEVEL") {
+        json n = head;
+        n["nsiLoadLevelInfos"] = Nwdaf3gppAdapter::nsiLoadLevelInfos(loads);
+        out.push_back(n);
+        return out;
+    }
+    for (const auto& group : Nwdaf3gppAdapter::sliceLoadLevelGroups(loads)) {
+        json n = head;
+        n["sliceLoadLevelInfo"] = group;
+        out.push_back(n);
+    }
+    return out;
 }
 
 }  // namespace
@@ -141,6 +220,15 @@ SbiResponse NwdafSbiService::dispatch(const SbiRequest& req) {
     if (req.method == "PUT")    return modifySubscription(req, id);
     if (req.method == "DELETE") return deleteSubscription(id);
     return methodNotAllowed("PUT, DELETE");
+}
+
+std::string NwdafSbiService::formatDateTime(std::chrono::system_clock::time_point tp) {
+    const auto t = std::chrono::system_clock::to_time_t(tp);
+    struct tm tm_buf;
+    gmtime_r(&t, &tm_buf);
+    char buf[32];
+    strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm_buf);
+    return buf;
 }
 
 std::optional<std::chrono::system_clock::time_point>
@@ -266,7 +354,8 @@ std::optional<NwdafSbiService::Rejection> NwdafSbiService::interpretNfLoad(
     // Target UE(s): "shall provide … supis or anyUe" (§4.2.2.2.2, §4.3.2.2).
     // Only the network-wide form is implemented: which AMF/SMF instance
     // serves a given SUPI is not observed.
-    if (!target) return Rejection{Rejection::MandatoryMissing, target_at, "mandatory for NF_LOAD"};
+    if (!target) return Rejection{Rejection::MandatoryMissing, target_at,
+                                  "the target UE (supis or anyUe) is mandatory for NF_LOAD"};
     if (target->contains("supis"))
         return Rejection{Rejection::MandatoryIncorrect, target_at,
                          "/supis: per-UE NF_LOAD is not supported by this NWDAF; use anyUe"};
@@ -352,20 +441,7 @@ SbiResponse NwdafSbiService::nfLoadInfo(std::map<std::string, json>& values,
                                "event-filter",
                                values.count("ana-req") ? &values["ana-req"] : nullptr, "ana-req",
                                query);
-    if (rej) {
-        const json ip = json::array({invalidParam(rej->where, rej->reason)});
-        switch (rej->kind) {
-        case Rejection::MandatoryMissing:
-            return problem(400, "MANDATORY_QUERY_PARAM_MISSING", "tgt-ue is mandatory for NF_LOAD", ip);
-        case Rejection::MandatoryIncorrect:
-            return problem(400, "MANDATORY_QUERY_PARAM_INCORRECT", rej->reason, ip, local.toHex());
-        case Rejection::Unsupported:
-            return problem(400, "OPTIONAL_QUERY_PARAM_INCORRECT", rej->reason, ip, local.toHex());
-        case Rejection::UnavailableData:
-            // §4.3.2.2: past statistics whose data is unavailable → 500 UNAVAILABLE_DATA.
-            return problem(500, "UNAVAILABLE_DATA", rej->reason);
-        }
-    }
+    if (rej) return queryRejection(*rej, local);
 
     const json infos = Nwdaf3gppAdapter::nfLoadLevelInfos(engine_.getCurrentNfMetrics(),
                                                           nf_monitor_->ids(),
@@ -374,13 +450,8 @@ SbiResponse NwdafSbiService::nfLoadInfo(std::map<std::string, json>& values,
     // NWDAF shall respond with 204 No Content".
     if (infos.empty()) return {204, "", "", {}};
 
-    const auto now = std::chrono::system_clock::now();
-    json data = {
-        {"timeStampGen",     formatDateTime(now)},
-        // Valid until the collectors next refresh the measurement.
-        {"expiry",           formatDateTime(now + std::chrono::seconds(config_.collection_interval_seconds))},
-        {"nfLoadLevelInfos", infos},
-    };
+    json data = timeStamps(config_);
+    data["nfLoadLevelInfos"] = infos;
     if (consumer) data["suppFeat"] = local.intersect(*consumer).toHex();
     return {200, "application/json", data.dump(), {}};
 }
@@ -465,15 +536,18 @@ std::optional<NwdafSbiService::Rejection> NwdafSbiService::sliceHistoryCovers(
     return std::nullopt;
 }
 
-NwdafReportInputs NwdafSbiService::inputs() const {
+NwdafReportInputs NwdafSbiService::gatherInputs(const NwdafAnalyticsEngine& engine,
+                                                const NwdafNfMonitor& nf_monitor) {
     NwdafReportInputs in;
-    in.metrics         = engine_.getCurrentNfMetrics();
-    in.nf_instance_ids = nf_monitor_->ids();
-    in.statuses        = nf_monitor_->statuses();
-    in.amf_oam         = engine_.getOamHistory("AMF");
-    in.smf_oam         = engine_.getOamHistory("SMF");
+    in.metrics         = engine.getCurrentNfMetrics();
+    in.nf_instance_ids = nf_monitor.ids();
+    in.statuses        = nf_monitor.statuses();
+    in.amf_oam         = engine.getOamHistory("AMF");
+    in.smf_oam         = engine.getOamHistory("SMF");
     return in;
 }
+
+NwdafReportInputs NwdafSbiService::inputs() const { return gatherInputs(engine_, *nf_monitor_); }
 
 SbiResponse NwdafSbiService::sliceLoadInfo(const std::string& event,
                                            std::map<std::string, json>& values,
@@ -485,30 +559,15 @@ SbiResponse NwdafSbiService::sliceLoadInfo(const std::string& event,
                                   "event-filter",
                                   values.count("ana-req") ? &values["ana-req"] : nullptr, "ana-req", query);
     if (!rej) rej = sliceHistoryCovers(query, in, config_, "ana-req");
-    if (rej) {
-        const json ip = json::array({invalidParam(rej->where, rej->reason)});
-        switch (rej->kind) {
-        case Rejection::MandatoryMissing:
-            return problem(400, "MANDATORY_QUERY_PARAM_MISSING", rej->reason, ip);
-        case Rejection::MandatoryIncorrect:
-            return problem(400, "MANDATORY_QUERY_PARAM_INCORRECT", rej->reason, ip, local.toHex());
-        case Rejection::Unsupported:
-            return problem(400, "OPTIONAL_QUERY_PARAM_INCORRECT", rej->reason, ip, local.toHex());
-        case Rejection::UnavailableData:
-            return problem(500, "UNAVAILABLE_DATA", rej->reason);
-        }
-    }
+    if (rej) return queryRejection(*rej, local);
 
-    const auto now = std::chrono::system_clock::now();
-    const auto loads = Nwdaf3gppAdapter::sliceLoads(config_, query, in.amf_oam, in.smf_oam, now);
+    const auto loads = Nwdaf3gppAdapter::sliceLoads(config_, query, in.amf_oam, in.smf_oam,
+                                                    std::chrono::system_clock::now());
     // §4.3.2.2: no analytics data for the request → 204 No Content. That
     // includes slices with no configured capacity (no load level, I-9).
     if (loads.empty()) return {204, "", "", {}};
 
-    json data = {
-        {"timeStampGen", formatDateTime(now)},
-        {"expiry",       formatDateTime(now + std::chrono::seconds(config_.collection_interval_seconds))},
-    };
+    json data = timeStamps(config_);
     if (event == "SLICE_LOAD_LEVEL") data["sliceLoadLevelInfos"] = Nwdaf3gppAdapter::sliceLoadLevelInfos(loads);
     else                             data["nsiLoadLevelInfos"]   = Nwdaf3gppAdapter::nsiLoadLevelInfos(loads);
     if (consumer) data["suppFeat"] = local.intersect(*consumer).toHex();
@@ -567,10 +626,14 @@ std::map<std::string, int> nsiThresholds(const json& es) {
 
 }  // namespace
 
+std::string NwdafSbiService::effectiveMethod(const json& evt_req, const json& es) {
+    return evt_req.contains("notifMethod") ? evt_req["notifMethod"].get<std::string>()
+                                           : es.value("notificationMethod", std::string("THRESHOLD"));
+}
+
 bool NwdafSbiService::thresholdMode(const json& evt_req, const json& es) {
-    if (evt_req.contains("notifMethod"))
-        return evt_req["notifMethod"].get<std::string>() == "ON_EVENT_DETECTION";
-    return es.value("notificationMethod", std::string("THRESHOLD")) == "THRESHOLD";
+    const std::string m = effectiveMethod(evt_req, es);
+    return m == "THRESHOLD" || m == "ON_EVENT_DETECTION";
 }
 
 std::optional<NwdafSbiService::Rejection> NwdafSbiService::interpretThresholds(const json& es,
@@ -615,23 +678,18 @@ std::vector<json> NwdafSbiService::thresholdReports(const json& es, const NwdafR
                                                     const NwdafConfig& config, ThresholdState& state) {
     std::vector<json> out;
     const std::string event = es.value("event", "");
-    const auto now = std::chrono::system_clock::now();
-    const json head = {{"event", event},
-                       {"timeStampGen", formatDateTime(now)},
-                       {"expiry", formatDateTime(now + std::chrono::seconds(config.collection_interval_seconds))}};
+    json head = timeStamps(config);
+    head["event"] = event;
 
     if (event == "NF_LOAD") {
-        Nwdaf3gppAdapter::NfLoadQuery query;
-        if (interpretNfLoad(es.contains("tgtUe") ? &es["tgtUe"] : nullptr, "tgtUe", es, "",
-                            es.contains("extraReportReq") ? &es["extraReportReq"] : nullptr,
-                            "extraReportReq", query))
-            return out;
+        const auto query = nfLoadQueryOf(es);
+        if (!query) return out;
         std::vector<int> levels;
         for (const auto& t : es.value("nfLoadLvlThds", json::array())) levels.push_back(t.value("nfCpuUsage", 0));
         // TS 23.288 §6.5.1: one threshold for all matching NFs; reported when
         // met for at least one of them — here, the NFs that crossed it.
         json crossed_nfs = json::array();
-        for (const auto& info : Nwdaf3gppAdapter::nfLoadLevelInfos(in.metrics, in.nf_instance_ids, in.statuses, query)) {
+        for (const auto& info : Nwdaf3gppAdapter::nfLoadLevelInfos(in.metrics, in.nf_instance_ids, in.statuses, *query)) {
             if (!info.contains("nfCpuUsage")) continue;
             if (crossedAny(state, info["nfInstanceId"].get<std::string>(), info["nfCpuUsage"].get<int>(),
                            levels, direction(es)))
@@ -646,14 +704,13 @@ std::vector<json> NwdafSbiService::thresholdReports(const json& es, const NwdafR
     }
 
     if (event == "SLICE_LOAD_LEVEL" || event == "NSI_LOAD_LEVEL") {
-        Nwdaf3gppAdapter::SliceQuery query;
-        if (interpretSliceLoad(event, &es, "", es.contains("extraReportReq") ? &es["extraReportReq"] : nullptr,
-                               "extraReportReq", query))
-            return out;
+        const auto query = sliceQueryOf(es);
+        if (!query) return out;
         const bool nsi = event == "NSI_LOAD_LEVEL";
         const auto per_slice = nsi ? nsiThresholds(es) : std::map<std::string, int>{};
         std::vector<NwdafSliceLoad> hits;
-        for (const auto& load : Nwdaf3gppAdapter::sliceLoads(config, query, in.amf_oam, in.smf_oam, now)) {
+        for (const auto& load : Nwdaf3gppAdapter::sliceLoads(config, *query, in.amf_oam, in.smf_oam,
+                                                             std::chrono::system_clock::now())) {
             int threshold;
             if (!nsi) {
                 threshold = es.value("loadLevelThreshold", 0);
@@ -666,18 +723,7 @@ std::vector<json> NwdafSbiService::thresholdReports(const json& es, const NwdafR
             if (crossedAny(state, load.slice.key(), load.load_level, {threshold}, Direction::Crossed))
                 hits.push_back(load);
         }
-        if (hits.empty()) return out;
-        if (nsi) {
-            json n = head;
-            n["nsiLoadLevelInfos"] = Nwdaf3gppAdapter::nsiLoadLevelInfos(hits);
-            out.push_back(n);
-        } else {
-            for (const auto& group : Nwdaf3gppAdapter::sliceLoadLevelGroups(hits)) {
-                json n = head;
-                n["sliceLoadLevelInfo"] = group;
-                out.push_back(n);
-            }
-        }
+        return sliceNotifications(hits, head);
     }
     return out;
 }
@@ -755,7 +801,7 @@ NwdafSbiService::evaluateSubscription(const SbiRequest& req, SubscriptionOutcome
 
     // 5. Per event.
     const auto advertised = NwdafAnalyticsCatalogue::rel18Advertised(config_);
-    const NwdafReportInputs in = (config_.slice_capacity.empty() ? NwdafReportInputs{} : inputs());
+    std::optional<NwdafReportInputs> in;   // fetched only when a slice period needs checking
     const auto& subs = body["eventSubscriptions"];
     for (size_t i = 0; i < subs.size(); ++i) {
         const json& es = subs[i];
@@ -772,21 +818,11 @@ NwdafSbiService::evaluateSubscription(const SbiRequest& req, SubscriptionOutcome
             continue;
         }
 
-        // Effective notification method: evtReq supersedes the event's own
-        // (§4.2.2.2.2 NOTE 1); the event's default is THRESHOLD (Table
-        // 5.1.6.2.3-1 NOTE 2).
-        const std::string method = evt_req.contains("notifMethod")
-            ? evt_req["notifMethod"].get<std::string>()
-            : es.value("notificationMethod", std::string("THRESHOLD"));
+        const std::string at = "/eventSubscriptions/" + std::to_string(i);
+        const std::string method = effectiveMethod(evt_req, es);
         if (thresholdMode(evt_req, es)) {
-            const std::string at_i = "/eventSubscriptions/" + std::to_string(i);
-            if (auto rej = interpretThresholds(es, at_i)) {
-                const json ip = json::array({invalidParam(rej->where, rej->reason)});
-                if (rej->kind == Rejection::MandatoryMissing)
-                    return problem(400, "MANDATORY_IE_MISSING", rej->reason, ip);
-                if (rej->kind == Rejection::MandatoryIncorrect)
-                    return problem(400, "MANDATORY_IE_INCORRECT", rej->reason, ip, local.toHex());
-                out.failed.push_back({{"event", event}, {"failureCode", "OTHER"}});   // I-3
+            if (auto rej = interpretThresholds(es, at)) {
+                if (auto resp = subscriptionRejection(*rej, local, event, out.failed)) return resp;
                 continue;
             }
         }
@@ -796,53 +832,27 @@ NwdafSbiService::evaluateSubscription(const SbiRequest& req, SubscriptionOutcome
             return problem(400, "MANDATORY_IE_MISSING",
                            "PERIODIC reporting requires a repetition period",
                            json::array({invalidParam(evt_req.contains("notifMethod")
-                                                         ? "/evtReq/repPeriod"
-                                                         : "/eventSubscriptions/" + std::to_string(i) + "/repetitionPeriod",
+                                                         ? "/evtReq/repPeriod" : at + "/repetitionPeriod",
                                                      "mandatory for PERIODIC reporting")}));
 
         // Event-specific inputs.
-        const std::string at = "/eventSubscriptions/" + std::to_string(i);
+        const std::string req_at = at + "/extraReportReq";
+        std::optional<Rejection> rej;
         if (event == "NF_LOAD") {
             Nwdaf3gppAdapter::NfLoadQuery query;
-            auto rej = interpretNfLoad(es.contains("tgtUe") ? &es["tgtUe"] : nullptr, at + "/tgtUe",
-                                       es, at,
-                                       es.contains("extraReportReq") ? &es["extraReportReq"] : nullptr,
-                                       at + "/extraReportReq", query);
-            if (rej) {
-                const json ip = json::array({invalidParam(rej->where, rej->reason)});
-                switch (rej->kind) {
-                case Rejection::MandatoryMissing:
-                    return problem(400, "MANDATORY_IE_MISSING", "tgtUe is mandatory for NF_LOAD", ip);
-                case Rejection::MandatoryIncorrect:
-                    return problem(400, "MANDATORY_IE_INCORRECT", rej->reason, ip, local.toHex());
-                case Rejection::Unsupported:   // I-3: this event fails, the others may proceed
-                    out.failed.push_back({{"event", event}, {"failureCode", "OTHER"}});
-                    continue;
-                case Rejection::UnavailableData:   // §4.2.2.2.2 → 500 UNAVAILABLE_DATA
-                    return problem(500, "UNAVAILABLE_DATA", rej->reason);
-                }
-            }
+            rej = interpretNfLoad(member(es, "tgtUe"), at + "/tgtUe", es, at,
+                                  member(es, "extraReportReq"), req_at, query);
         } else if (event == "SLICE_LOAD_LEVEL" || event == "NSI_LOAD_LEVEL") {
             Nwdaf3gppAdapter::SliceQuery query;
-            const std::string req_at = at + "/extraReportReq";
-            auto rej = interpretSliceLoad(event, &es, at,
-                                          es.contains("extraReportReq") ? &es["extraReportReq"] : nullptr,
-                                          req_at, query);
-            if (!rej) rej = sliceHistoryCovers(query, in, config_, req_at);
-            if (rej) {
-                const json ip = json::array({invalidParam(rej->where, rej->reason)});
-                switch (rej->kind) {
-                case Rejection::MandatoryMissing:
-                    return problem(400, "MANDATORY_IE_MISSING", rej->reason, ip);
-                case Rejection::MandatoryIncorrect:
-                    return problem(400, "MANDATORY_IE_INCORRECT", rej->reason, ip, local.toHex());
-                case Rejection::Unsupported:   // I-3
-                    out.failed.push_back({{"event", event}, {"failureCode", "OTHER"}});
-                    continue;
-                case Rejection::UnavailableData:
-                    return problem(500, "UNAVAILABLE_DATA", rej->reason);
-                }
+            rej = interpretSliceLoad(event, &es, at, member(es, "extraReportReq"), req_at, query);
+            if (!rej && query.from) {
+                if (!in) in = inputs();
+                rej = sliceHistoryCovers(query, *in, config_, req_at);
             }
+        }
+        if (rej) {
+            if (auto resp = subscriptionRejection(*rej, local, event, out.failed)) return resp;
+            continue;
         }
         out.accepted.push_back(i);
     }
@@ -886,40 +896,22 @@ static json representation(const json& request, const std::vector<size_t>& accep
 std::vector<json> NwdafSbiService::eventReports(const json& es, const NwdafReportInputs& in,
                                                 const NwdafConfig& config) {
     const std::string event = es.value("event", "");
-    const auto now = std::chrono::system_clock::now();
-    const json head = {{"event", event},
-                       {"timeStampGen", formatDateTime(now)},
-                       {"expiry", formatDateTime(now + std::chrono::seconds(config.collection_interval_seconds))}};
+    json head = timeStamps(config);
+    head["event"] = event;
     std::vector<json> out;
     if (event == "NF_LOAD") {
-        Nwdaf3gppAdapter::NfLoadQuery query;
-        if (interpretNfLoad(es.contains("tgtUe") ? &es["tgtUe"] : nullptr, "tgtUe", es, "",
-                            es.contains("extraReportReq") ? &es["extraReportReq"] : nullptr,
-                            "extraReportReq", query))
-            return out;   // cannot happen for an accepted event
-        json infos = Nwdaf3gppAdapter::nfLoadLevelInfos(in.metrics, in.nf_instance_ids, in.statuses, query);
+        const auto query = nfLoadQueryOf(es);
+        if (!query) return out;   // cannot happen for an accepted event
+        json infos = Nwdaf3gppAdapter::nfLoadLevelInfos(in.metrics, in.nf_instance_ids, in.statuses, *query);
         if (infos.empty()) return out;
-        json n = head;
-        n["nfLoadLevelInfos"] = infos;
-        out.push_back(n);
+        head["nfLoadLevelInfos"] = infos;
+        out.push_back(head);
     } else if (event == "SLICE_LOAD_LEVEL" || event == "NSI_LOAD_LEVEL") {
-        Nwdaf3gppAdapter::SliceQuery query;
-        if (interpretSliceLoad(event, &es, "", es.contains("extraReportReq") ? &es["extraReportReq"] : nullptr,
-                               "extraReportReq", query))
-            return out;   // cannot happen for an accepted event
-        const auto loads = Nwdaf3gppAdapter::sliceLoads(config, query, in.amf_oam, in.smf_oam, now);
-        if (loads.empty()) return out;
-        if (event == "NSI_LOAD_LEVEL") {
-            json n = head;
-            n["nsiLoadLevelInfos"] = Nwdaf3gppAdapter::nsiLoadLevelInfos(loads);
-            out.push_back(n);
-        } else {
-            for (const auto& group : Nwdaf3gppAdapter::sliceLoadLevelGroups(loads)) {
-                json n = head;
-                n["sliceLoadLevelInfo"] = group;
-                out.push_back(n);
-            }
-        }
+        const auto query = sliceQueryOf(es);
+        if (!query) return out;   // cannot happen for an accepted event
+        return sliceNotifications(Nwdaf3gppAdapter::sliceLoads(config, *query, in.amf_oam, in.smf_oam,
+                                                               std::chrono::system_clock::now()),
+                                  head);
     }
     return out;
 }

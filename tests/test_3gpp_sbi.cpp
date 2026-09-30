@@ -6,6 +6,7 @@
 // tests pin the request-validation layers and the truthful "not supported"
 // outcomes; per-ID success paths join as each Rel-18 mapping lands.
 #include <catch2/catch_test_macros.hpp>
+#include "official_schema.hpp"
 #include "nwdaf_server.hpp"
 #include "nwdaf_analytics.hpp"
 #include "nwdaf_sbi.hpp"
@@ -150,10 +151,7 @@ static json requireProblem(const Result& res, int status, const std::string& cau
     REQUIRE(res->status == status);
     REQUIRE(res->get_header_value("Content-Type") == "application/problem+json");
     json body = json::parse(res->body);
-    static NwdafSchemaValidator official(NWDAF_3GPP_OPENAPI_DIR);
-    auto v = official.validate(body, "TS29571_CommonData.yaml#/components/schemas/ProblemDetails");
-    INFO((v.empty() ? std::string() : v.front().pointer + " " + v.front().reason));
-    REQUIRE(v.empty());
+    requireOfficialSchema(body, "TS29571_CommonData.yaml#/components/schemas/ProblemDetails");
     REQUIRE(body["cause"] == cause);
     return body;
 }
@@ -370,10 +368,7 @@ static json requireAnalyticsData(const Result& res) {
     REQUIRE(res->status == 200);
     REQUIRE(res->get_header_value("Content-Type") == "application/json");
     json body = json::parse(res->body);
-    static NwdafSchemaValidator official(NWDAF_3GPP_OPENAPI_DIR);
-    auto v = official.validate(body, "TS29520_Nnwdaf_AnalyticsInfo.yaml#/components/schemas/AnalyticsData");
-    INFO((v.empty() ? std::string() : v.front().pointer + " " + v.front().reason));
-    REQUIRE(v.empty());
+    requireOfficialSchema(body, "TS29520_Nnwdaf_AnalyticsInfo.yaml#/components/schemas/AnalyticsData");
     return body;
 }
 
@@ -487,10 +482,7 @@ static json requireSubscription(const Result& res, int status) {
     INFO(res->body);
     REQUIRE(res->status == status);
     json body = json::parse(res->body);
-    static NwdafSchemaValidator official(NWDAF_3GPP_OPENAPI_DIR);
-    auto v = official.validate(body, "TS29520_Nnwdaf_EventsSubscription.yaml#/components/schemas/NnwdafEventsSubscription");
-    INFO((v.empty() ? std::string() : v.front().pointer + " " + v.front().reason));
-    REQUIRE(v.empty());
+    requireOfficialSchema(body, "TS29520_Nnwdaf_EventsSubscription.yaml#/components/schemas/NnwdafEventsSubscription");
     return body;
 }
 
@@ -670,11 +662,7 @@ TEST_CASE("H1.7: NF_LOAD notifications are Rel-18 NnwdafEventsSubscriptionNotifi
     REQUIRE(consumer.callback == "Nnwdaf_EventsSubscription_Notify");
     REQUIRE(consumer.content_type == "application/json");
     const json n = consumer.received.front();
-    static NwdafSchemaValidator official(NWDAF_3GPP_OPENAPI_DIR);
-    auto v = official.validate(
-        n, "TS29520_Nnwdaf_EventsSubscription.yaml#/components/schemas/NnwdafEventsSubscriptionNotification");
-    INFO((v.empty() ? std::string() : v.front().pointer + " " + v.front().reason));
-    REQUIRE(v.empty());
+    requireOfficialSchema(n, "TS29520_Nnwdaf_EventsSubscription.yaml#/components/schemas/NnwdafEventsSubscriptionNotification");
     REQUIRE(n["subscriptionId"] == id);
     REQUIRE(n["eventNotifications"][0]["event"] == "NF_LOAD");
     REQUIRE(n["eventNotifications"][0]["nfLoadLevelInfos"].size() == 2);
@@ -798,11 +786,7 @@ TEST_CASE("H1.7: a crossed NF_LOAD threshold is notified once per crossing (I-10
     REQUIRE(consumer.count() == 1);   // still above: no second report
 
     const json n = consumer.received.front();
-    static NwdafSchemaValidator official(NWDAF_3GPP_OPENAPI_DIR);
-    auto v = official.validate(
-        n, "TS29520_Nnwdaf_EventsSubscription.yaml#/components/schemas/NnwdafEventsSubscriptionNotification");
-    INFO((v.empty() ? std::string() : v.front().pointer + " " + v.front().reason));
-    REQUIRE(v.empty());
+    requireOfficialSchema(n, "TS29520_Nnwdaf_EventsSubscription.yaml#/components/schemas/NnwdafEventsSubscriptionNotification");
     REQUIRE(n["eventNotifications"][0]["nfLoadLevelInfos"][0]["nfCpuUsage"] == 70);
 }
 #endif
