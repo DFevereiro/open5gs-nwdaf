@@ -249,6 +249,7 @@ install(TARGETS open5gs-nwdafd DESTINATION /usr/local/bin)
 # nwdaf-cli queries the 3GPP interfaces, nwdaf-fake-oam serves synthetic
 # Open5GS metrics, and nwdaf-notify-sink prints the notifications it receives.
 install(PROGRAMS tools/nwdaf-cli tools/nwdaf-fake-oam DESTINATION /usr/local/bin)
+# tools/nwdaf-local runs from the source tree (QOL-04): it uses config/ and build/.
 if(NWDAF_USE_HTTP2)
     add_executable(nwdaf-notify-sink tools/nwdaf_notify_sink.cpp)
     nwdaf_warnings(nwdaf-notify-sink)

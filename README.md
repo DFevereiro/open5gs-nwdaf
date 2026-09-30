@@ -296,7 +296,14 @@ curl -X POST "http://127.0.0.1:7779/nwdaf-analytics/v1/subscriptions" \
 
 ### 🧰 Test tools
 
-Three tools in [`tools/`](tools/) exercise the 3GPP interfaces without a consumer NF, UEs or a core. `cmake --install` puts them in `/usr/local/bin`.
+The tools in [`tools/`](tools/) exercise the 3GPP interfaces without a consumer NF, UEs or a core. The quickest start is one command from the repository root, after a build:
+
+```bash
+tools/nwdaf-local            # fake Open5GS data + notify sink + the NWDAF (config/nwdaf-local.yaml); Ctrl-C stops all
+tools/nwdaf-local --check    # the same, with smoke checks through nwdaf-cli (also run in CI)
+```
+
+`cmake --install` puts the three tools below in `/usr/local/bin`.
 
 | Tool | What it does |
 |---|---|

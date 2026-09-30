@@ -1,0 +1,47 @@
+# NWDAF configuration for local testing without a core (QOL-04): the metrics
+# and the AMF UE list come from tools/nwdaf-fake-oam. tools/nwdaf-local starts
+# everything with this file; by hand, from the repository root after a build:
+#   tools/nwdaf-fake-oam --area 1:16 --area 2:32 --move 5 &
+#   ./build/open5gs-nwdafd --config config/nwdaf-local.yaml
+# See config/nwdaf.yaml for every key.
+nwdaf:
+  nf_instance_id: "4b0c6c2e-5a3f-4d0e-9c1b-2f6e8a7d9c10"
+  plmn_mcc: "999"
+  plmn_mnc: "70"
+  served_snssai_sst: 1
+
+  sbi_bind_address: "127.0.0.1"
+  sbi_port: 7779          # operator API (and the 3GPP API over HTTP/1.1)
+  sbi_h2_port: 7780       # 3GPP Nnwdaf interfaces, HTTP/2 (h2c)
+  nrf_register_on_startup: false
+
+  # nwdaf-fake-oam on its default port.
+  oam_metrics_endpoints:
+    AMF: "http://127.0.0.1:9090/amf/metrics"
+    SMF: "http://127.0.0.1:9090/smf/metrics"
+  amf_ue_info_endpoint: "http://127.0.0.1:9090/ue-info"
+
+  # Small capacity, so the fake UEs move the load level (I-9).
+  slice_capacity:
+    - snssai: {sst: 1}
+      max_ues: 10
+      max_pdu_sessions: 10
+  served_tai_list:
+    - {tac: 1}
+    - {tac: 2}
+
+  # Short windows, so results follow changes quickly.
+  collection_interval_seconds: 1
+  slice_load_window_seconds: 30
+  network_performance_window_seconds: 30
+  ue_mobility_window_seconds: 300
+
+  mongodb_uri: ""
+  throughput_interfaces: ["lo"]
+  model_dir: "/tmp/nwdaf-local/models"
+  log_level: "info"
+  log_file: "/tmp/nwdaf-local/nwdaf.log"
+  # Relative to the repository root; tools/nwdaf-local rewrites both for its
+  # build directory.
+  openapi_spec_path: "docs/openapi/nwdaf-analytics-v1.yaml"
+  openapi_3gpp_dir: "build/3gpp-openapi"

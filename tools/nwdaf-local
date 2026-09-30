@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+# QOL-04: nwdaf-local — the NWDAF with synthetic Open5GS data, in one command.
+#
+# Starts nwdaf-fake-oam (metrics and AMF UE list on :9090), nwdaf-notify-sink
+# (:9999, when built) and open5gs-nwdafd with config/nwdaf-local.yaml, from a
+# build directory. Ctrl-C stops them all. --check runs smoke checks through
+# nwdaf-cli instead and exits 1 on a failure (CI). Needs python3, curl and jq.
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+BUILD="$ROOT/build"
+CHECK=0
+
+usage() {
+    cat <<'EOF'
+usage: nwdaf-local [--build DIR] [--check]
+  --build DIR   the build directory (default: build/ in the repository)
+  --check       run smoke checks against the running set, then stop
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --build) BUILD="$(cd "$2" && pwd)" || exit 2; shift 2 ;;
+        --check) CHECK=1; shift ;;
+        -h|--help) usage; exit 0 ;;
+        *) usage >&2; exit 2 ;;
+    esac
+done
+for c in python3 curl jq; do command -v "$c" >/dev/null || { echo "nwdaf-local: $c is required" >&2; exit 2; }; done
+[[ -x "$BUILD/open5gs-nwdafd" ]] || { echo "nwdaf-local: no open5gs-nwdafd in $BUILD (build first)" >&2; exit 2; }
+
+RUN="$(mktemp -d "${TMPDIR:-/tmp}/nwdaf-local.XXXXXX")"
+PIDS=()
+cleanup() {
+    for p in "${PIDS[@]}"; do kill "$p" 2>/dev/null; done
+    wait 2>/dev/null
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM
+
+# The local config with this build's OpenAPI files and a private run directory.
+sed -e "s|\"docs/openapi/|\"$ROOT/docs/openapi/|" \
+    -e "s|\"build/3gpp-openapi\"|\"$BUILD/3gpp-openapi\"|" \
+    -e "s|\"/tmp/nwdaf-local/|\"$RUN/|" \
+    "$ROOT/config/nwdaf-local.yaml" > "$RUN/nwdaf.yaml"
+
+python3 "$ROOT/tools/nwdaf-fake-oam" --quiet --ues 3 --sessions 3 --req-rate 2 --fail-ratio 0.25 \
+    --area 1:16 --area 2:32 --move 5 2>"$RUN/fake-oam.log" &
+PIDS+=($!)
+SINK=0
+if [[ -x "$BUILD/nwdaf-notify-sink" ]]; then
+    "$BUILD/nwdaf-notify-sink" --port 9999 --compact >"$RUN/sink.log" 2>&1 &
+    PIDS+=($!)
+    SINK=1
+fi
+"$BUILD/open5gs-nwdafd" --config "$RUN/nwdaf.yaml" >"$RUN/daemon.log" 2>&1 &
+PIDS+=($!)
+
+for _ in $(seq 1 30); do
+    curl -sf http://127.0.0.1:7779/nwdaf-analytics/v1/health >/dev/null && break
+    sleep 1
+done
+curl -sf http://127.0.0.1:7779/nwdaf-analytics/v1/health >/dev/null || {
+    echo "nwdaf-local: the NWDAF did not start; see $RUN/daemon.log" >&2; tail -20 "$RUN/daemon.log" >&2; exit 1; }
+
+# Without HTTP/2 the 3GPP interfaces are served on the operator port only.
+CLI=("$ROOT/tools/nwdaf-cli")
+if [[ $SINK == 0 ]]; then CLI+=(--http1 --sbi http://127.0.0.1:7779); fi
+
+if [[ $CHECK == 0 ]]; then
+    cat <<EOF
+NWDAF running with synthetic data (run directory: $RUN)
+  operator API  http://127.0.0.1:7779/nwdaf-analytics/v1/health
+  3GPP API      http://127.0.0.1:7780 (h2c)
+  fake OAM      http://127.0.0.1:9090   (curl 'http://127.0.0.1:9090/set?ues=8')
+$( [[ $SINK == 1 ]] && echo "  notify sink   http://127.0.0.1:9999   (log: $RUN/sink.log)" )
+Try:
+  ${CLI[*]} health
+  ${CLI[*]} get NETWORK_PERFORMANCE --nw-perf NUM_OF_UE --tai 999-70-2
+  ${CLI[*]} get UE_MOBILITY --supi imsi-999700000000001
+Ctrl-C stops everything.
+EOF
+    wait
+    exit 0
+fi
+
+# ── --check ─────────────────────────────────────────────────────────────────
+FAILED=0
+check() {   # NAME COMMAND…: the command succeeds and its stdout satisfies the jq filter in $EXPECT (if any)
+    local name=$1; shift
+    local out
+    if out=$("$@" 2>/dev/null) && { [[ -z "$EXPECT" ]] || jq -e "$EXPECT" >/dev/null 2>&1 <<<"$out"; }; then
+        echo "ok    $name"
+    else
+        echo "FAIL  $name"; echo "$out" | head -20 | sed 's/^/      /'
+        FAILED=1
+    fi
+}
+
+sleep 5   # a few collection intervals: counters need two scrapes
+
+EXPECT='.rel18Analytics.advertised as $a | (["NETWORK_PERFORMANCE","NSI_LOAD_LEVEL","SLICE_LOAD_LEVEL","UE_MOBILITY"] - $a) == [] and all(.oamSources[]; .up)'
+check "health: advertised analytics and sources up" "${CLI[@]}" health
+
+EXPECT='(.nwPerfs | length) == 2 and .nwPerfs[1].relativeRatio >= 1'
+check "NETWORK_PERFORMANCE for the served area" \
+    "${CLI[@]}" get NETWORK_PERFORMANCE --nw-perf NUM_OF_UE --nw-perf SESS_SUCC_RATIO --tai 999-70-1 --tai 999-70-2
+
+EXPECT='.nwPerfs[0].networkArea.tais[0].tac == "000002" and .nwPerfs[0].absoluteNum >= 0'
+check "NUM_OF_UE for one TA (AMF UE list)" "${CLI[@]}" get NETWORK_PERFORMANCE --nw-perf NUM_OF_UE --tai 999-70-2
+
+EXPECT='.sliceLoadLevelInfos[0].loadLevelInformation >= 1'
+check "SLICE_LOAD_LEVEL" "${CLI[@]}" get SLICE_LOAD_LEVEL --any-slice
+
+EXPECT='(.ueMobs | length) >= 1 and .ueMobs[0].locInfos[0].loc.nrLocation.tai.tac != null'
+check "UE_MOBILITY for a SUPI" "${CLI[@]}" get UE_MOBILITY --supi imsi-999700000000001
+
+EXPECT='.eventNotifications[0].sliceLoadLevelInfo.loadLevelInformation >= 1'
+SUB_OUT=$("${CLI[@]}" subscribe SLICE_LOAD_LEVEL --snssai 1 --period 5 --imm \
+          --notify http://127.0.0.1:9999/local 2>"$RUN/subscribe.err")
+check "subscribe with an immediate report" echo "$SUB_OUT"
+SUB_ID=$(sed -n 's/^subscription: //p' "$RUN/subscribe.err")
+
+if [[ $SINK == 1 && -n "$SUB_ID" ]]; then
+    for _ in $(seq 1 20); do grep -q "$SUB_ID" "$RUN/sink.log" && break; sleep 1; done
+    EXPECT='.body.subscriptionId != null and .body.eventNotifications[0].event == "SLICE_LOAD_LEVEL"'
+    check "a periodic notification reached the sink" grep -m1 "$SUB_ID" "$RUN/sink.log"
+fi
+if [[ -n "$SUB_ID" ]]; then
+    EXPECT=''
+    check "unsubscribe" "${CLI[@]}" unsubscribe "$SUB_ID"
+fi
+
+if [[ $FAILED == 1 ]]; then
+    echo "--- daemon log (last lines)"; tail -20 "$RUN/daemon.log"
+    exit 1
+fi
+echo "all checks passed"

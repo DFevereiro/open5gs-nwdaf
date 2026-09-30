@@ -65,6 +65,12 @@ jobs:
         working-directory: build
         run: ctest --output-on-failure --timeout 120
 
+      # QOL-04: the daemon with synthetic Open5GS data, queried through the
+      # test tools, so they stay in step with the SBI and the collector.
+      - name: Smoke test with the test tools
+        if: matrix.profile == 'full'
+        run: tools/nwdaf-local --build build --check
+
   # ── Ubuntu 20.04 (container — hosted 20.04 runners were retired) ──────────────
   build-2004:
     name: Ubuntu 20.04 · ${{ matrix.profile }}

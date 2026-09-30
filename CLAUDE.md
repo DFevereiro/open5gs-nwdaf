@@ -140,7 +140,8 @@ IDs use the Rel-18 `NwdafEvent` spelling (`QOS_SUSTAINABILITY`, `RED_TRANS_EXP`)
 - `tools/`: test tooling, installed to `/usr/local/bin`:
   - `nwdaf-cli` (bash + curl + jq): a 3GPP consumer.
   - `nwdaf-notify-sink` (C++ on `NwdafH2Server`, built with HTTP/2): prints notifications.
-  - `nwdaf-fake-oam` (Python stdlib): synthetic Open5GS AMF/SMF metrics.
+  - `nwdaf-fake-oam` (Python stdlib): synthetic Open5GS AMF/SMF metrics and the AMF `/ue-info` list.
+  - `nwdaf-local`: runs the three with the daemon and `config/nwdaf-local.yaml` from a build directory; `--check` is the CI smoke test (22.04 full job).
 
   Keep their metric names and request shapes in step with the collector and the SBI.
 - `grafana/nwdaf_dashboard.json`: a Grafana dashboard fed by `/metrics`.

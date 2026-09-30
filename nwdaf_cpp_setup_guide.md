@@ -671,7 +671,11 @@ curl -s -X POST http://localhost:7779/nwdaf-analytics/v1/train | python3 -m json
 ### The 3GPP interfaces, with the test tools
 
 The Rel-18 interfaces answer on port 7780 over HTTP/2. The tools in `tools/`
-feed and query them without a core or UEs (needs `jq` and `python3`):
+feed and query them without a core or UEs (needs `jq` and `python3`). The
+short way is `tools/nwdaf-local`: it starts the fake Open5GS data, the
+notification sink and the NWDAF with `config/nwdaf-local.yaml`, prints example
+queries, and stops everything on Ctrl-C (`--check` runs smoke checks instead).
+Step by step:
 
 ```bash
 # 1. Synthetic Open5GS AMF/SMF metrics
