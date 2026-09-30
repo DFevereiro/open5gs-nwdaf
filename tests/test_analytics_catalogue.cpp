@@ -48,6 +48,34 @@ TEST_CASE("H1.7: advertisement follows configured capability, not runtime data")
     REQUIRE(Cat::rel18Advertised(cfg).count("NF_LOAD") == 1);
 }
 
+TEST_CASE("QOL-03: each implemented ID is either advertised or withheld with a reason") {
+    NwdafConfig cfg;
+    auto check = [&] {
+        const auto adv = Cat::rel18Advertised(cfg);
+        const auto withheld = Cat::rel18NotAdvertised(cfg);
+        for (const auto& id : Cat::REL18_IMPLEMENTED) {
+            INFO("analyticsId=" << id);
+            REQUIRE(adv.count(id) + withheld.count(id) == 1);
+        }
+        for (const auto& [id, reason] : withheld) {
+            REQUIRE(Cat::REL18_IMPLEMENTED.count(id) == 1);
+            REQUIRE_FALSE(reason.empty());
+        }
+    };
+    check();
+    REQUIRE(Cat::rel18NotAdvertised(cfg).at("NETWORK_PERFORMANCE") == "served_tai_list is not configured");
+    REQUIRE(Cat::rel18NotAdvertised(cfg).at("SLICE_LOAD_LEVEL") == "slice_capacity is not configured");
+
+    cfg.served_tai_list.push_back({"999", "70", "000001"});
+    check();
+    REQUIRE(Cat::rel18NotAdvertised(cfg).at("NETWORK_PERFORMANCE") == "no AMF or SMF in oam_metrics_endpoints");
+    cfg.oam_metrics_endpoints["SMF"] = "http://127.0.0.4:9090/metrics";
+    cfg.nrf_nf_discovery = true;
+    check();
+    REQUIRE(Cat::rel18NotAdvertised(cfg).count("NETWORK_PERFORMANCE") == 0);
+    REQUIRE(Cat::rel18NotAdvertised(cfg).count("NF_LOAD") == 0);
+}
+
 TEST_CASE("H1.7: nf_instance_ids must name monitored NF types and hold UUIDs") {
     const std::string path = "/tmp/nwdaf_nf_ids_config.yaml";
     auto load = [&](const std::string& ids) {

@@ -22,6 +22,8 @@
 #include <yaml-cpp/yaml.h>
 #include <filesystem>
 #include <fstream>
+#include <map>
+#include <set>
 #include <thread>
 #include <chrono>
 #include <memory>
@@ -382,6 +384,13 @@ TEST_CASE("H1.6: /health conforms and advertises the live catalogue") {
     REQUIRE(ids.size() == NwdafAnalyticsCatalogue::OPERATOR_IDS.size());
     for (const auto& id : ids)
         REQUIRE(NwdafAnalyticsCatalogue::OPERATOR_IDS.count(id) == 1);
+
+    // QOL-03: the Rel-18 advertisement and the reasons for what it withholds.
+    const auto& rel18 = body["rel18Analytics"];
+    REQUIRE(rel18["advertised"].get<std::set<std::string>>() ==
+            NwdafAnalyticsCatalogue::rel18Advertised(f.cfg));
+    REQUIRE(rel18["notAdvertised"].get<std::map<std::string, std::string>>() ==
+            NwdafAnalyticsCatalogue::rel18NotAdvertised(f.cfg));
 }
 
 TEST_CASE("H1.6: /ready conforms in both states") {

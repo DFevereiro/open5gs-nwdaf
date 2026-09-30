@@ -1,0 +1,193 @@
+#!/usr/bin/env python3
+"""QOL-02: nwdaf-fake-oam — synthetic Open5GS v2.8.0 AMF/SMF metrics.
+
+Serves the TS 28.552-named Prometheus series the NWDAF reads from Open5GS, so
+it can be fed without a core or UEs:
+
+  /amf/metrics  fivegs_amffunction_rm_registeredsubnbr{plmnid,snssai}  (gauge)
+  /smf/metrics  fivegs_smffunction_sm_sessionnbr{plmnid,snssai}        (gauge)
+                fivegs_smffunction_sm_pdusessioncreationreq            (counter,
+                  unlabelled and per slice, as Open5GS counts it)
+                fivegs_smffunction_sm_pdusessioncreationfail{cause}    (counter)
+                fivegs_smffunction_sm_pdusessioncreationsucc{...}      (counter,
+                  twice per success, like Open5GS v2.8.0)
+
+Point the NWDAF at it:
+  oam_metrics_endpoints:
+    AMF: http://127.0.0.1:9090/amf/metrics
+    SMF: http://127.0.0.1:9090/smf/metrics
+
+Change the state while it runs:
+  curl 'http://127.0.0.1:9090/set?ues=8&sessions=6'           # every slice
+  curl 'http://127.0.0.1:9090/set?snssai=1-000001&ues=2'       # one slice
+  curl 'http://127.0.0.1:9090/set?req_rate=2&fail_ratio=0.25'  # session setups
+  curl  http://127.0.0.1:9090/                                 # current state
+"""
+import argparse
+import json
+import math
+import sys
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlparse
+
+
+class Core:
+    """The simulated counts. Counters advance with wall-clock time."""
+
+    def __init__(self, args):
+        self.lock = threading.Lock()
+        self.plmn = args.plmn
+        # snssai labels as Open5GS prints them: SST, or SST-SD with a lower-case SD.
+        self.slices = {s.lower(): {"ues": args.ues, "sessions": args.sessions} for s in args.slice}
+        self.req_rate = args.req_rate        # PDU session requests per second
+        self.fail_ratio = args.fail_ratio    # share of them that fail
+        self.wave = args.wave                # seconds; 0 = constant counts
+        self.start = time.monotonic()
+        self.last = self.start
+        self.req = 0.0                       # fractional, to keep low rates exact
+        self.fail = 0.0
+
+    def _advance(self):
+        now = time.monotonic()
+        n = self.req_rate * (now - self.last)
+        self.req += n
+        self.fail += n * self.fail_ratio
+        self.last = now
+
+    def _scale(self):
+        # --wave: counts follow a sine between 0 and the set value.
+        if not self.wave:
+            return 1.0
+        return 0.5 - 0.5 * math.cos(2 * math.pi * (time.monotonic() - self.start) / self.wave)
+
+    def set(self, q):
+        with self.lock:
+            self._advance()
+            slices = [q["snssai"].lower()] if "snssai" in q else list(self.slices)
+            for s in slices:
+                entry = self.slices.setdefault(s, {"ues": 0, "sessions": 0})
+                for key in ("ues", "sessions"):
+                    if key in q:
+                        entry[key] = max(0, int(q[key]))
+            if "req_rate" in q:
+                self.req_rate = max(0.0, float(q["req_rate"]))
+            if "fail_ratio" in q:
+                self.fail_ratio = min(1.0, max(0.0, float(q["fail_ratio"])))
+            if "wave" in q:
+                self.wave = max(0.0, float(q["wave"]))
+
+    def state(self):
+        with self.lock:
+            self._advance()
+            return {"plmnid": self.plmn, "slices": self.slices, "req_rate": self.req_rate,
+                    "fail_ratio": self.fail_ratio, "wave": self.wave,
+                    "requests": int(self.req), "failures": int(self.fail)}
+
+    def amf(self):
+        with self.lock:
+            k = self._scale()
+            out = ["# HELP fivegs_amffunction_rm_registeredsubnbr Number of registered state subscribers per AMF",
+                   "# TYPE fivegs_amffunction_rm_registeredsubnbr gauge"]
+            for s, v in self.slices.items():
+                out.append(f'fivegs_amffunction_rm_registeredsubnbr{{plmnid="{self.plmn}",snssai="{s}"}} '
+                           f'{round(v["ues"] * k)}')
+            return "\n".join(out) + "\n"
+
+    def smf(self):
+        with self.lock:
+            self._advance()
+            k = self._scale()
+            req, fail = int(self.req), int(self.fail)
+            succ = req - fail
+            share = max(1, len(self.slices))
+            out = ["# HELP fivegs_smffunction_sm_sessionnbr Active Sessions",
+                   "# TYPE fivegs_smffunction_sm_sessionnbr gauge"]
+            for s, v in self.slices.items():
+                out.append(f'fivegs_smffunction_sm_sessionnbr{{plmnid="{self.plmn}",snssai="{s}"}} '
+                           f'{round(v["sessions"] * k)}')
+            out += ["# HELP fivegs_smffunction_sm_pdusessioncreationreq Number of PDU sessions requested to be created by the SMF",
+                    "# TYPE fivegs_smffunction_sm_pdusessioncreationreq counter",
+                    # Every request once, unlabelled (on receipt), then per slice.
+                    f'fivegs_smffunction_sm_pdusessioncreationreq{{plmnid="",snssai=""}} {req}']
+            for i, s in enumerate(self.slices):
+                n = req // share + (1 if i < req % share else 0)
+                out.append(f'fivegs_smffunction_sm_pdusessioncreationreq{{plmnid="{self.plmn}",snssai="{s}"}} {n}')
+            out += ["# HELP fivegs_smffunction_sm_pdusessioncreationfail Number of PDU sessions failed to be created by the SMF",
+                    "# TYPE fivegs_smffunction_sm_pdusessioncreationfail counter",
+                    f'fivegs_smffunction_sm_pdusessioncreationfail{{cause="26"}} {fail}',
+                    "# HELP fivegs_smffunction_sm_pdusessioncreationsucc Number of PDU sessions successfully created by the SMF",
+                    "# TYPE fivegs_smffunction_sm_pdusessioncreationsucc counter",
+                    # Open5GS v2.8.0 counts each success twice (see I-11).
+                    f'fivegs_smffunction_sm_pdusessioncreationsucc{{plmnid="{self.plmn}",snssai=""}} {2 * succ}']
+            return "\n".join(out) + "\n"
+
+
+def handler_for(core, quiet):
+    class Handler(BaseHTTPRequestHandler):
+        def _send(self, status, body, ctype):
+            data = body.encode()
+            self.send_response(status)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def do_GET(self):
+            url = urlparse(self.path)
+            q = {k: v[-1] for k, v in parse_qs(url.query).items()}
+            try:
+                if url.path in ("/amf/metrics", "/metrics/amf"):
+                    self._send(200, core.amf(), "text/plain; version=0.0.4")
+                elif url.path in ("/smf/metrics", "/metrics/smf"):
+                    self._send(200, core.smf(), "text/plain; version=0.0.4")
+                elif url.path == "/set":
+                    core.set(q)
+                    self._send(200, json.dumps(core.state(), indent=2) + "\n", "application/json")
+                elif url.path == "/":
+                    self._send(200, json.dumps(core.state(), indent=2) + "\n", "application/json")
+                else:
+                    self._send(404, "not found\n", "text/plain")
+            except ValueError as e:
+                self._send(400, f"bad value: {e}\n", "text/plain")
+
+        def log_message(self, fmt, *args):
+            if not quiet:
+                sys.stderr.write("%s %s\n" % (self.address_string(), fmt % args))
+
+    return Handler
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--bind", default="127.0.0.1")
+    p.add_argument("--port", type=int, default=9090)
+    p.add_argument("--plmn", default="99970", help="plmnid label: MCC+MNC (default 99970)")
+    p.add_argument("--slice", action="append",
+                   help="snssai label, SST or SST-SD, repeatable (default 1)")
+    p.add_argument("--ues", type=int, default=3, help="registered UEs per slice (default 3)")
+    p.add_argument("--sessions", type=int, default=3, help="PDU sessions per slice (default 3)")
+    p.add_argument("--req-rate", type=float, default=0.2,
+                   help="PDU session requests per second (default 0.2)")
+    p.add_argument("--fail-ratio", type=float, default=0.1,
+                   help="share of the requests that fail (default 0.1)")
+    p.add_argument("--wave", type=float, default=0,
+                   help="make UE and session counts swing between 0 and the set value over this many seconds")
+    p.add_argument("--quiet", action="store_true", help="don't log requests")
+    args = p.parse_args()
+    args.slice = args.slice or ["1"]
+
+    core = Core(args)
+    server = ThreadingHTTPServer((args.bind, args.port), handler_for(core, args.quiet))
+    base = f"http://{args.bind}:{args.port}"
+    print(f"AMF metrics: {base}/amf/metrics\nSMF metrics: {base}/smf/metrics\ncontrol:     {base}/set?ues=N",
+          file=sys.stderr)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+
+
+if __name__ == "__main__":
+    main()

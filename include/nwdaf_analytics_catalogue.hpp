@@ -1,5 +1,6 @@
 #pragma once
 #include "nwdaf_config.hpp"
+#include <map>
 #include <set>
 #include <string>
 
@@ -43,4 +44,9 @@ public:
     // advertisement does not flap when a data source or the NRF is briefly
     // unavailable; such failures surface as analytics failures instead.
     static std::set<std::string> rel18Advertised(const NwdafConfig& cfg);
+
+    // QOL-03: the implemented IDs this configuration doesn't advertise, each
+    // with the configuration it lacks (shown in the operator /health).
+    // rel18Advertised() is REL18_IMPLEMENTED minus these keys.
+    static std::map<std::string, std::string> rel18NotAdvertised(const NwdafConfig& cfg);
 };

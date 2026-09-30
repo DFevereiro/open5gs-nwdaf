@@ -41,23 +41,32 @@ std::string NwdafAnalyticsCatalogue::canonicalOperatorId(const std::string& id) 
     return id;
 }
 
-std::set<std::string> NwdafAnalyticsCatalogue::rel18Advertised(const NwdafConfig& cfg) {
-    std::set<std::string> out;
-    for (const auto& id : REL18_IMPLEMENTED) {
-        // NfLoadLevelInformation requires nfInstanceId: without a configured
-        // instance-ID source (the map, or NRF discovery) the NWDAF cannot
-        // produce NF_LOAD truthfully.
-        if (id == "NF_LOAD" && cfg.nf_instance_ids.empty() && !cfg.nrf_nf_discovery) continue;
-        // I-9: slice load level is defined only against a configured slice
-        // capacity, whose counts come from the configured metrics endpoints.
-        if ((id == "SLICE_LOAD_LEVEL" || id == "NSI_LOAD_LEVEL") && cfg.slice_capacity.empty()) continue;
-        // I-11: the served area must be configured, and at least one type's source.
-        if (id == "NETWORK_PERFORMANCE" &&
-            (cfg.served_tai_list.empty() ||
-             (!Nwdaf3gppAdapter::nwPerfTypeAvailable("NUM_OF_UE", cfg) &&
-              !Nwdaf3gppAdapter::nwPerfTypeAvailable("SESS_SUCC_RATIO", cfg))))
-            continue;
-        out.insert(id);
+std::map<std::string, std::string> NwdafAnalyticsCatalogue::rel18NotAdvertised(const NwdafConfig& cfg) {
+    std::map<std::string, std::string> out;
+    // NfLoadLevelInformation requires nfInstanceId: without a configured
+    // instance-ID source (the map, or NRF discovery) the NWDAF cannot
+    // produce NF_LOAD truthfully.
+    if (cfg.nf_instance_ids.empty() && !cfg.nrf_nf_discovery)
+        out["NF_LOAD"] = "no NF instance ID source: set nf_instance_ids or nrf_nf_discovery";
+    // I-9: slice load level is defined only against a configured slice
+    // capacity, whose counts come from the configured metrics endpoints.
+    if (cfg.slice_capacity.empty()) {
+        out["SLICE_LOAD_LEVEL"] = "slice_capacity is not configured";
+        out["NSI_LOAD_LEVEL"]   = "slice_capacity is not configured";
     }
+    // I-11: the served area must be configured, and at least one type's source.
+    if (cfg.served_tai_list.empty())
+        out["NETWORK_PERFORMANCE"] = "served_tai_list is not configured";
+    else if (!Nwdaf3gppAdapter::nwPerfTypeAvailable("NUM_OF_UE", cfg) &&
+             !Nwdaf3gppAdapter::nwPerfTypeAvailable("SESS_SUCC_RATIO", cfg))
+        out["NETWORK_PERFORMANCE"] = "no AMF or SMF in oam_metrics_endpoints";
+    return out;
+}
+
+std::set<std::string> NwdafAnalyticsCatalogue::rel18Advertised(const NwdafConfig& cfg) {
+    const auto withheld = rel18NotAdvertised(cfg);
+    std::set<std::string> out;
+    for (const auto& id : REL18_IMPLEMENTED)
+        if (!withheld.count(id)) out.insert(id);
     return out;
 }

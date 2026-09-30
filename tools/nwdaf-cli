@@ -1,0 +1,341 @@
+#!/usr/bin/env bash
+# QOL-01: nwdaf-cli — a consumer for the NWDAF's 3GPP interfaces.
+#
+# Builds Nnwdaf_AnalyticsInfo queries (JSON-encoded query parameters,
+# TS 29.500 §6.1.4) and Nnwdaf_EventsSubscription bodies from short options,
+# and sends them over HTTP/2 like an NF would. Needs curl (with HTTP/2) and jq.
+set -euo pipefail
+
+SBI="${NWDAF_SBI:-http://127.0.0.1:7780}"
+OPS="${NWDAF_OPS:-http://127.0.0.1:7779}"
+HTTP_VERSION=""
+VERBOSE=0
+CURL_EXTRA=()
+
+usage() {
+    cat <<'EOF'
+usage: nwdaf-cli [global options] <command> [options]
+
+commands:
+  get EVENT [filter options] [--start TS] [--end TS] [--ana-req JSON]
+      Nnwdaf_AnalyticsInfo. EVENT is an analytics ID; SLICE_LOAD_LEVEL is sent
+      as its EventId LOAD_LEVEL_INFORMATION.
+  subscribe EVENT --notify URI [reporting options] [filter options]
+  subscribe --body FILE|-       send a complete NnwdafEventsSubscription
+      Nnwdaf_EventsSubscription Subscribe. Prints the Location and the reports.
+  modify SUBSCRIPTION --body FILE|-      Update (PUT)
+  unsubscribe SUBSCRIPTION               Unsubscribe (DELETE)
+      SUBSCRIPTION is the subscription ID or the Location URI.
+  health                                 what is advertised, and why not the rest
+
+filter options (the attributes of EventFilter / EventSubscription):
+  --any-ue | --supi SUPI...    target UE (default anyUe for NF_LOAD, NETWORK_PERFORMANCE)
+  --tgt-ue JSON                target UE as JSON
+  --nf-type TYPE               NF_LOAD: nfTypes (repeatable)
+  --nf-id UUID                 NF_LOAD: nfInstanceIds (repeatable)
+  --snssai SST[-SD]            slice (repeatable); NSI_LOAD_LEVEL: nsiIdInfos
+  --any-slice                  SLICE_LOAD_LEVEL: anySlice
+  --tai MCC-MNC-TAC            networkArea TAI, TAC as 6 hex digits or a number (repeatable)
+  --nw-perf TYPE               NETWORK_PERFORMANCE type (repeatable): NUM_OF_UE, SESS_SUCC_RATIO
+  --filter JSON                more attributes, merged in as given
+  --features HEX               supported features
+
+reporting options (subscribe):
+  --period SECONDS             PERIODIC (the default, every 30 s)
+  --one-time                   ONE_TIME
+  --threshold N                THRESHOLD at level N: nfCpuUsage, loadLevelThreshold,
+                               nsiLevelThrds, or per nwPerfType (absoluteNum / relativeRatio)
+  --direction DIR              matchingDir: ASCENDING, DESCENDING or CROSSED
+  --imm                        immediate report (evtReq.immRep)
+  --max-reports N              evtReq.maxReportNbr
+
+global options:
+  --sbi URL        3GPP interfaces (default $NWDAF_SBI or http://127.0.0.1:7780)
+  --ops URL        operator API, for health (default $NWDAF_OPS or http://127.0.0.1:7779)
+  --http1          use HTTP/1.1 (the NWDAF also answers the 3GPP API on --sbi port 7779)
+  --token TOKEN    OAuth 2.0 access token (Bearer)
+  --cacert/--cert/--key FILE    TLS files for https:// URLs
+  -v               show the request and the response headers
+
+examples:
+  nwdaf-cli get NF_LOAD --nf-type AMF
+  nwdaf-cli get SLICE_LOAD_LEVEL --any-slice
+  nwdaf-cli get NETWORK_PERFORMANCE --nw-perf NUM_OF_UE --nw-perf SESS_SUCC_RATIO --tai 999-70-1
+  nwdaf-cli subscribe SLICE_LOAD_LEVEL --snssai 1 --threshold 60 --notify http://127.0.0.1:9999/n --imm
+EOF
+}
+
+die() { echo "nwdaf-cli: $*" >&2; exit 2; }
+command -v jq >/dev/null || die "jq is required"
+command -v curl >/dev/null || die "curl is required"
+
+# ── helpers ────────────────────────────────────────────────────────────────
+
+uri() { jq -rn --arg v "$1" '$v|@uri'; }
+
+snssai_json() {   # 1 | 1-000001 → {"sst":1[,"sd":"000001"]}
+    local sst="${1%%-*}" sd=""
+    [[ "$1" == *-* ]] && sd="${1#*-}"
+    [[ "$sst" =~ ^[0-9]+$ ]] || die "bad S-NSSAI '$1' (SST or SST-SD)"
+    jq -cn --argjson sst "$sst" --arg sd "${sd,,}" '{sst:$sst} + (if $sd == "" then {} else {sd:$sd} end)'
+}
+
+tai_json() {   # MCC-MNC-TAC → Tai; TAC as 4 or 6 hex digits, otherwise a number (as served_tai_list)
+    IFS=- read -r mcc mnc tac <<<"$1"
+    [[ -n "${mcc:-}" && -n "${mnc:-}" && -n "${tac:-}" ]] || die "bad TAI '$1' (MCC-MNC-TAC)"
+    if [[ ${#tac} == 4 || ${#tac} == 6 ]] && [[ "$tac" =~ ^[0-9A-Fa-f]+$ ]]; then
+        tac=$(printf '%06x' "$((16#$tac))")
+    elif [[ "$tac" =~ ^[0-9]+$ ]]; then
+        tac=$(printf '%06x' "$tac")
+    else
+        die "bad TAC in '$1'"
+    fi
+    jq -cn --arg mcc "$mcc" --arg mnc "$mnc" --arg tac "$tac" '{plmnId:{mcc:$mcc,mnc:$mnc},tac:$tac}'
+}
+
+# Sends a request; prints the status and headers to stderr and the body to stdout.
+# Exit status 1 for a 4xx/5xx answer.
+send() {   # METHOD URL [BODY]
+    local method=$1 url=$2 body=${3-}
+    local hdr out
+    hdr=$(mktemp); out=$(mktemp)
+    local args=(-sS -X "$method" -D "$hdr" -o "$out" -w '%{http_code} HTTP/%{http_version}')
+    if [[ -n "$HTTP_VERSION" ]]; then args+=("$HTTP_VERSION")
+    elif [[ "$url" == https://* ]]; then args+=(--http2)
+    else args+=(--http2-prior-knowledge); fi
+    [[ -n "$body" ]] && args+=(-H 'Content-Type: application/json' --data-binary "$body")
+    args+=("${CURL_EXTRA[@]}")
+    if [[ $VERBOSE == 1 ]]; then
+        echo "> $method $url" >&2
+        [[ -n "$body" ]] && jq . <<<"$body" >&2
+    fi
+    local code status=0
+    code=$(curl "${args[@]}" "$url") || { rm -f "$hdr" "$out"; die "request failed: $method $url"; }
+    echo "< ${code#* } ${code%% *}" >&2
+    if [[ $VERBOSE == 1 ]]; then sed -n '2,$p' "$hdr" | tr -d '\r' | sed '/^$/d; s/^/< /' >&2
+    else grep -i '^location:' "$hdr" | tr -d '\r' | sed 's/^/< /' >&2 || true; fi
+    if [[ -s "$out" ]]; then jq . "$out" 2>/dev/null || cat "$out"; fi
+    LAST_LOCATION=$(awk -F': ' 'tolower($1)=="location" {print $2}' "$hdr" | tr -d '\r')
+    rm -f "$hdr" "$out"
+    [[ "${code%% *}" -ge 400 ]] && status=1
+    return $status
+}
+
+body_arg() {   # FILE or - → JSON text
+    local src=$1 text
+    if [[ "$src" == - ]]; then text=$(cat); else text=$(cat -- "$src"); fi
+    jq -c . <<<"$text" >/dev/null 2>&1 || die "the body is not JSON"
+    printf '%s' "$text"
+}
+
+subscription_url() {   # ID or URL
+    if [[ "$1" == http://* || "$1" == https://* ]]; then echo "$1"
+    else echo "$SBI/nnwdaf-eventssubscription/v1/subscriptions/$1"; fi
+}
+
+# ── filter options, shared by get and subscribe ────────────────────────────
+
+EVENT="" TGT_UE="" FILTER="{}" FEATURES=""
+SUPIS=() NF_TYPES=() NF_IDS=() SNSSAIS=() TAIS=() NWPERF=()
+ANY_SLICE=0
+
+# Consumes one filter option; returns 1 when "$1" isn't one.
+filter_opt() {
+    case "$1" in
+        --any-ue)    TGT_UE='{"anyUe":true}'; SHIFT=1 ;;
+        --supi)      SUPIS+=("$2"); SHIFT=2 ;;
+        --tgt-ue)    TGT_UE="$2"; SHIFT=2 ;;
+        --nf-type)   NF_TYPES+=("$2"); SHIFT=2 ;;
+        --nf-id)     NF_IDS+=("$2"); SHIFT=2 ;;
+        --snssai)    SNSSAIS+=("$(snssai_json "$2")"); SHIFT=2 ;;
+        --any-slice) ANY_SLICE=1; SHIFT=1 ;;
+        --tai)       TAIS+=("$(tai_json "$2")"); SHIFT=2 ;;
+        --nw-perf)   NWPERF+=("$2"); SHIFT=2 ;;
+        --filter)    FILTER=$(jq -c --argjson f "$2" '. + $f' <<<"$FILTER") || die "--filter is not JSON"; SHIFT=2 ;;
+        --features)  FEATURES="$2"; SHIFT=2 ;;
+        *) return 1 ;;
+    esac
+}
+
+target_ue() {   # the tgt-ue / tgtUe value, or empty
+    if [[ -n "$TGT_UE" ]]; then echo "$TGT_UE"
+    elif [[ ${#SUPIS[@]} -gt 0 ]]; then printf '%s\n' "${SUPIS[@]}" | jq -cRn '{supis:[inputs]}'
+    elif [[ "$EVENT" == NF_LOAD || "$EVENT" == NETWORK_PERFORMANCE ]]; then echo '{"anyUe":true}'
+    fi
+    return 0
+}
+
+# The filter attributes as one JSON object; $1 = get | subscribe.
+filter_json() {
+    local j="{}"
+    arr() { printf '%s\n' "$@" | jq -cs .; }
+    strs() { printf '%s\n' "$@" | jq -cRn '[inputs]'; }
+    [[ ${#NF_TYPES[@]} -gt 0 ]] && j=$(jq -c --argjson v "$(strs "${NF_TYPES[@]}")" '.nfTypes=$v' <<<"$j")
+    [[ ${#NF_IDS[@]} -gt 0 ]] && j=$(jq -c --argjson v "$(strs "${NF_IDS[@]}")" '.nfInstanceIds=$v' <<<"$j")
+    if [[ ${#SNSSAIS[@]} -gt 0 ]]; then
+        if [[ "$EVENT" == NSI_LOAD_LEVEL ]]; then
+            j=$(jq -c --argjson v "$(arr "${SNSSAIS[@]}")" '.nsiIdInfos=[$v[]|{snssai:.}]' <<<"$j")
+        else
+            j=$(jq -c --argjson v "$(arr "${SNSSAIS[@]}")" '.snssais=$v' <<<"$j")
+        fi
+    fi
+    [[ $ANY_SLICE == 1 ]] && j=$(jq -c '.anySlice=true' <<<"$j")
+    [[ ${#TAIS[@]} -gt 0 ]] && j=$(jq -c --argjson v "$(arr "${TAIS[@]}")" '.networkArea={tais:$v}' <<<"$j")
+    if [[ ${#NWPERF[@]} -gt 0 ]]; then
+        if [[ "$1" == get ]]; then
+            j=$(jq -c --argjson v "$(strs "${NWPERF[@]}")" '.nwPerfTypes=$v' <<<"$j")
+        else
+            j=$(jq -c --argjson v "$(strs "${NWPERF[@]}")" '.nwPerfRequs=[$v[]|{nwPerfType:.}]' <<<"$j")
+        fi
+    fi
+    jq -c --argjson f "$FILTER" '. + $f' <<<"$j"
+}
+
+# ── commands ───────────────────────────────────────────────────────────────
+
+cmd_get() {
+    [[ $# -ge 1 ]] || die "get: missing EVENT"
+    EVENT=$1; shift
+    local event_id=$EVENT start="" end="" ana_req="{}"
+    [[ "$EVENT" == SLICE_LOAD_LEVEL ]] && event_id=LOAD_LEVEL_INFORMATION
+    [[ "$EVENT" == LOAD_LEVEL_INFORMATION ]] && EVENT=SLICE_LOAD_LEVEL
+    while [[ $# -gt 0 ]]; do
+        SHIFT=0
+        if filter_opt "$@"; then shift "$SHIFT"; continue; fi
+        case "$1" in
+            --start)   start=$2; shift 2 ;;
+            --end)     end=$2; shift 2 ;;
+            --ana-req) ana_req=$2; shift 2 ;;
+            *) die "get: unknown option $1" ;;
+        esac
+    done
+    [[ -n "$start" ]] && ana_req=$(jq -c --arg v "$start" '.startTs=$v' <<<"$ana_req")
+    [[ -n "$end" ]] && ana_req=$(jq -c --arg v "$end" '.endTs=$v' <<<"$ana_req")
+
+    local url="$SBI/nnwdaf-analyticsinfo/v1/analytics?event-id=$(uri "$event_id")"
+    local tgt filter
+    tgt=$(target_ue)
+    filter=$(filter_json get)
+    [[ -n "$tgt" ]] && url+="&tgt-ue=$(uri "$tgt")"
+    [[ "$filter" != "{}" ]] && url+="&event-filter=$(uri "$filter")"
+    [[ "$ana_req" != "{}" ]] && url+="&ana-req=$(uri "$ana_req")"
+    [[ -n "$FEATURES" ]] && url+="&supported-features=$(uri "$FEATURES")"
+    if [[ $VERBOSE == 1 ]]; then
+        echo "  event-id=$event_id" >&2
+        [[ -n "$tgt" ]] && echo "  tgt-ue=$tgt" >&2
+        [[ "$filter" != "{}" ]] && echo "  event-filter=$filter" >&2
+        [[ "$ana_req" != "{}" ]] && echo "  ana-req=$ana_req" >&2
+    fi
+    send GET "$url"
+}
+
+cmd_subscribe() {
+    local body="" notify="" method=PERIODIC period=30 threshold="" direction="" imm=0 max_reports=""
+    if [[ "${1:-}" != --* ]]; then
+        [[ $# -ge 1 ]] || die "subscribe: missing EVENT"
+        EVENT=$1; shift
+        [[ "$EVENT" == LOAD_LEVEL_INFORMATION ]] && EVENT=SLICE_LOAD_LEVEL
+    fi
+    while [[ $# -gt 0 ]]; do
+        SHIFT=0
+        if filter_opt "$@"; then shift "$SHIFT"; continue; fi
+        case "$1" in
+            --body)        body=$(body_arg "$2"); shift 2 ;;
+            --notify)      notify=$2; shift 2 ;;
+            --period)      method=PERIODIC; period=$2; shift 2 ;;
+            --one-time)    method=ONE_TIME; shift ;;
+            --threshold)   method=THRESHOLD; threshold=$2; shift 2 ;;
+            --direction)   direction=$2; shift 2 ;;
+            --imm)         imm=1; shift ;;
+            --max-reports) max_reports=$2; shift 2 ;;
+            *) die "subscribe: unknown option $1" ;;
+        esac
+    done
+
+    if [[ -z "$body" ]]; then
+        [[ -n "$EVENT" ]] || die "subscribe: give EVENT or --body"
+        [[ -n "$notify" ]] || die "subscribe: --notify URI is required"
+        local es tgt evt_req="{}"
+        es=$(jq -c --arg e "$EVENT" '{event:$e} + .' <<<"$(filter_json subscribe)")
+        tgt=$(target_ue)
+        [[ -n "$tgt" ]] && es=$(jq -c --argjson t "$tgt" '.tgtUe=$t' <<<"$es")
+        case "$method" in
+            PERIODIC)  es=$(jq -c --argjson p "$period" '.notificationMethod="PERIODIC" | .repetitionPeriod=$p' <<<"$es") ;;
+            ONE_TIME)  evt_req=$(jq -c '.notifMethod="ONE_TIME"' <<<"$evt_req") ;;
+            THRESHOLD)
+                [[ "$threshold" =~ ^[0-9]+$ ]] || die "--threshold needs a whole number"
+                es=$(jq -c --argjson n "$threshold" '.notificationMethod="THRESHOLD" |
+                    if .event == "NF_LOAD" then .nfLoadLvlThds=[{nfCpuUsage:$n}]
+                    elif .event == "SLICE_LOAD_LEVEL" then .loadLevelThreshold=$n
+                    elif .event == "NSI_LOAD_LEVEL" then .nsiLevelThrds=[$n]
+                    elif .event == "NETWORK_PERFORMANCE" then
+                        .nwPerfRequs |= map(if .nwPerfType == "NUM_OF_UE" then .absoluteNum=$n else .relativeRatio=$n end)
+                    else . end' <<<"$es") ;;
+        esac
+        [[ -n "$direction" ]] && es=$(jq -c --arg d "$direction" '.matchingDir=$d' <<<"$es")
+        [[ $imm == 1 ]] && evt_req=$(jq -c '.immRep=true' <<<"$evt_req")
+        [[ -n "$max_reports" ]] && evt_req=$(jq -c --argjson n "$max_reports" '.maxReportNbr=$n' <<<"$evt_req")
+        body=$(jq -cn --argjson es "$es" --arg uri "$notify" --argjson r "$evt_req" --arg f "$FEATURES" \
+            '{eventSubscriptions:[$es], notificationURI:$uri}
+             + (if $r == {} then {} else {evtReq:$r} end)
+             + (if $f == "" then {} else {supportedFeatures:$f} end)')
+    fi
+
+    local rc=0
+    send POST "$SBI/nnwdaf-eventssubscription/v1/subscriptions" "$body" || rc=$?
+    [[ -n "${LAST_LOCATION:-}" ]] && echo "subscription: ${LAST_LOCATION##*/}" >&2
+    return $rc
+}
+
+cmd_modify() {
+    [[ $# -ge 1 ]] || die "modify: missing SUBSCRIPTION"
+    local url body=""
+    url=$(subscription_url "$1"); shift
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --body) body=$(body_arg "$2"); shift 2 ;;
+            *) die "modify: unknown option $1" ;;
+        esac
+    done
+    [[ -n "$body" ]] || die "modify: --body FILE|- is required"
+    send PUT "$url" "$body"
+}
+
+cmd_unsubscribe() {
+    [[ $# -eq 1 ]] || die "unsubscribe: give one SUBSCRIPTION"
+    send DELETE "$(subscription_url "$1")"
+}
+
+cmd_health() {
+    local out
+    out=$(curl -sS ${HTTP_VERSION:+"$HTTP_VERSION"} "${CURL_EXTRA[@]}" "$OPS/nwdaf-analytics/v1/health") ||
+        die "no answer from $OPS"
+    jq '{status, sbiTransportProfile, rel18Analytics,
+         oamSources: [(.oamSources // [])[] | {nfType, endpoint, up, samples}]}' <<<"$out"
+}
+
+# ── main ───────────────────────────────────────────────────────────────────
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --sbi)    SBI=${2%/}; shift 2 ;;
+        --ops)    OPS=${2%/}; shift 2 ;;
+        --http1)  HTTP_VERSION=--http1.1; shift ;;
+        --token)  CURL_EXTRA+=(-H "Authorization: Bearer $2"); shift 2 ;;
+        --cacert|--cert|--key) CURL_EXTRA+=("$1" "$2"); shift 2 ;;
+        -v)       VERBOSE=1; shift ;;
+        -h|--help) usage; exit 0 ;;
+        *) break ;;
+    esac
+done
+[[ $# -ge 1 ]] || { usage >&2; exit 2; }
+cmd=$1; shift
+case "$cmd" in
+    get)         cmd_get "$@" ;;
+    subscribe)   cmd_subscribe "$@" ;;
+    modify)      cmd_modify "$@" ;;
+    unsubscribe) cmd_unsubscribe "$@" ;;
+    health)      cmd_health ;;
+    help)        usage ;;
+    *) die "unknown command '$cmd' (see --help)" ;;
+esac

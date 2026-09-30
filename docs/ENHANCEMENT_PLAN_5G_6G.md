@@ -45,7 +45,8 @@ Last updated **2026-09-30** (branch `rel18-compliance`; last release `v1.1.0`).
 | H1.8 — HTTP/2 SBI transport + compliance profile | — | **Done**: nghttp2 server and libcurl client, the rel18-sbi and dev-legacy profiles, CI over HTTP/2; validated against the Open5GS v2.8.0 NRF |
 | H1.9 — Truthful Rel-18 NRF profile, lifecycle, discovery | — | **Done**: truthful profile, NFRegister, heartbeat with `404` re-registration, NFDeregister, and NF instance IDs plus NF_LOAD `nfStatus` from NRF list/profile retrieval, all validated against the Open5GS v2.8.0 NRF. (NFDiscover was replaced on 2026-09-29: Open5GS NFs don't allow NWDAF, so the NRF hides them from it.) |
 | H1.10 — SBI security: mTLS, OAuth2 token validation, NRF client TLS | — | **Done**: mTLS on both listeners; OAuth 2.0 access-token validation per TS 33.501 §13.4.1 with pluggable key sources. Open5GS doesn't implement OAuth 2.0, so it stays off there. |
-| **M1 — Rel-18 supported-scope compliance gate** | — | **Passed 2026-09-28**. Scope: both Nnwdaf services with NF_LOAD, HTTP/2, the NRF lifecycle and discovery, mTLS and OAuth2 ([`3gpp-rel18-compliance.md`](3gpp-rel18-compliance.md)) |
+| **M1 — Rel-18 supported-scope compliance gate** | — | **Passed 2026-09-28**. Scope: both Nnwdaf services with NF_LOAD, HTTP/2, the NRF lifecycle and discovery, mTLS and OAuth2. Widened since with SLICE_LOAD_LEVEL and NSI_LOAD_LEVEL (2026-09-29) and NETWORK_PERFORMANCE (2026-09-30), each with its official-schema tests ([`3gpp-rel18-compliance.md`](3gpp-rel18-compliance.md)) |
+| QoL — test tooling and diagnostics | — | **Done** 2026-09-30: `tools/nwdaf-cli` (3GPP consumer, QOL-01), `tools/nwdaf-notify-sink` (notification consumer, QOL-01), `tools/nwdaf-fake-oam` (synthetic Open5GS metrics, QOL-02), and `rel18Analytics` in `/health` (what is advertised, and the configuration the rest lacks, QOL-03). Candidates: `--check-config` / `--version`, more settings on SIGHUP, dashboard views for the Rel-18 analytics |
 | H2.x — MLOps platform | [#29](https://github.com/cem8kaya/open5gs-nwdaf/issues/29)–[#35](https://github.com/cem8kaya/open5gs-nwdaf/issues/35) | Not started |
 | H3.x — 6G readiness | [#36](https://github.com/cem8kaya/open5gs-nwdaf/issues/36)–[#41](https://github.com/cem8kaya/open5gs-nwdaf/issues/41) | Not started |
 
@@ -53,9 +54,9 @@ Last updated **2026-09-30** (branch `rel18-compliance`; last release `v1.1.0`).
 
 | Criterion | Status |
 |---|---|
-| Analytics IDs | 7 → **10** (target ≥11) |
-| OpenAPI-validated SBI | ✅ (operator API) |
-| Slice-aware | ✗ |
+| Analytics IDs | 7 → **10** on the operator API; **4** in Rel-18 form on the 3GPP interfaces (target ≥11) |
+| OpenAPI-validated SBI | ✅ (operator API; the 3GPP interfaces against the official schemas) |
+| Slice-aware | Partial: slice and NSI load level from the per-slice OAM counts; the other analytics are network-wide |
 | Per-UE PFCP series | ✗ |
 | SBI-mode ingestion | ✗ |
 | Rel-18 supported-scope gate (M1) | ✓ |
@@ -96,6 +97,8 @@ control. The Open5GS v2.8.0 SMF applies no such control, so the shipped
 ---
 
 ## 2. Current-state assessment
+
+> This is the v1.1.0 baseline, written before the Rel-18 work. The current status is in §1a.
 
 ### 2.1 Strengths (keep and build on)
 

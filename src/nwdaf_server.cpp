@@ -403,6 +403,12 @@ void NwdafServer::handleHealth(const httplib::Request& req, httplib::Response& r
             }
             return out;
         }()},
+        // QOL-03: what the 3GPP interfaces advertise, and why the other
+        // implemented analytics aren't (the configuration they lack).
+        {"rel18Analytics", {
+            {"advertised",    NwdafAnalyticsCatalogue::rel18Advertised(config_)},
+            {"notAdvertised", NwdafAnalyticsCatalogue::rel18NotAdvertised(config_)}
+        }},
         {"nfProfile", {
             {"nfType",       "NWDAF"},
             {"nfInstanceId", config_.nf_instance_id},

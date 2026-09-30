@@ -48,6 +48,24 @@ lsb_release -a
 # Expected: Ubuntu 20.04.x LTS
 ```
 
+### Ubuntu 22.04 / 24.04 (short path)
+
+The rest of this guide is written for 20.04. On 22.04 and 24.04 the apt
+toolchain is new enough (CMake ≥ 3.22, GCC 11–14, OpenSSL 3), so sections 2
+and 3 reduce to:
+
+```bash
+sudo apt install -y build-essential cmake git pkg-config \
+    libssl-dev libsystemd-dev libsqlite3-dev libnghttp2-dev libcurl4-openssl-dev \
+    curl jq python3        # jq and python3 are for the test tools (section 10)
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DNWDAF_BUILD_TESTS=ON
+cmake --build build --parallel "$(nproc)"
+```
+
+TLS and HTTP/2 are on by default, so this is the `rel18-sbi` profile. GCC 13
+and 14 are supported: warnings are errors only in this project's code, not in
+the fetched dependencies (BUILD-01).
+
 ---
 
 ## 2. Install Build Toolchain
@@ -107,23 +125,11 @@ cmake --version  # Should print: 3.28.x or higher
 
 ## 3. Install Runtime Dependencies
 
-### 3.1 yaml-cpp
+### 3.1 yaml-cpp, spdlog, nlohmann/json, cpp-httplib, Catch2
 
-```bash
-sudo apt install -y libyaml-cpp-dev
-
-# Verify
-pkg-config --modversion yaml-cpp
-```
-
-### 3.2 spdlog
-
-```bash
-sudo apt install -y libspdlog-dev
-
-# Verify
-pkg-config --modversion spdlog 2>/dev/null || echo "spdlog installed (no pkg-config entry on Ubuntu 20)"
-```
+Nothing to install: CMake fetches pinned versions of these at configure time
+(`FetchContent`), so the first configure needs network access. Don't install
+them from apt; the build doesn't use system copies.
 
 ### 3.3 libsystemd-dev (for sd-journal API — optional for local dev)
 
@@ -195,13 +201,7 @@ pkg-config --modversion libmongocxx
 
 ### 3.5 Catch2 (test framework)
 
-```bash
-cd /tmp
-git clone https://github.com/catchorg/Catch2.git --branch v3.5.2 --depth=1
-cd Catch2
-cmake -S . -B build -DBUILD_TESTING=OFF
-sudo cmake --build build --target install --parallel 4
-```
+Fetched by CMake with `-DNWDAF_BUILD_TESTS=ON` (see 3.1).
 
 ---
 
@@ -668,6 +668,45 @@ sleep 30
 curl -s -X POST http://localhost:7779/nwdaf-analytics/v1/train | python3 -m json.tool
 ```
 
+### The 3GPP interfaces, with the test tools
+
+The Rel-18 interfaces answer on port 7780 over HTTP/2. The tools in `tools/`
+feed and query them without a core or UEs (needs `jq` and `python3`):
+
+```bash
+# 1. Synthetic Open5GS AMF/SMF metrics
+tools/nwdaf-fake-oam --ues 4 --req-rate 2 --fail-ratio 0.25 &
+```
+
+Point `config/nwdaf.yaml` at it and give the analytics their configuration,
+then restart the NWDAF:
+
+```yaml
+  oam_metrics_endpoints:
+    AMF: "http://127.0.0.1:9090/amf/metrics"
+    SMF: "http://127.0.0.1:9090/smf/metrics"
+  slice_capacity:
+    - snssai: {sst: 1}
+      max_ues: 10
+      max_pdu_sessions: 10
+  served_tai_list:
+    - {tac: 1}
+```
+
+```bash
+# 2. What is advertised, and why not the rest
+tools/nwdaf-cli health
+
+# 3. Queries
+tools/nwdaf-cli get SLICE_LOAD_LEVEL --any-slice
+tools/nwdaf-cli get NETWORK_PERFORMANCE --nw-perf NUM_OF_UE --nw-perf SESS_SUCC_RATIO --tai 999-70-1
+
+# 4. A subscription, and a consumer that prints its notifications
+./build/nwdaf-notify-sink --port 9999 &
+tools/nwdaf-cli subscribe SLICE_LOAD_LEVEL --snssai 1 --threshold 60 --notify http://127.0.0.1:9999/n
+curl 'http://127.0.0.1:9090/set?ues=9'     # crosses 60 %: the sink prints the report
+```
+
 ---
 
 ## 11. VS Code Debugging
@@ -812,23 +851,13 @@ curl http://127.0.0.1:7777/nnrf-nfm/v1/nf-instances | python3 -m json.tool | gre
 
 ## 13. Troubleshooting
 
-### Build fails: `Could not find yaml-cpp`
+### Build fails in yaml-cpp, spdlog or fmt headers
 
-```bash
-sudo apt install -y libyaml-cpp-dev
-# If still not found, specify path explicitly:
-cmake .. -Dyaml-cpp_DIR=/usr/lib/x86_64-linux-gnu/cmake/yaml-cpp
-```
-
-### Build fails: `Could not find spdlog`
-
-```bash
-sudo apt install -y libspdlog-dev
-# Ubuntu 20 spdlog version may be old; build from source if needed:
-cd /tmp && git clone https://github.com/gabime/spdlog.git --branch v1.13.0 --depth=1
-cd spdlog && cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-sudo cmake --build build --target install
-```
+These come from `FetchContent`, not from apt. A `-Werror=dangling-reference`
+error in spdlog's bundled fmt (GCC 13 and later) means a checkout from before
+BUILD-01: pull the current branch. yaml-cpp 0.8.0 doesn't build with GCC 16 or
+later (a missing `<cstdint>`); use GCC ≤ 15. With CMake 4, add
+`-DCMAKE_POLICY_VERSION_MINIMUM=3.5`.
 
 ### Build fails: `FetchContent cmake error` (no internet)
 

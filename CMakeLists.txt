@@ -243,6 +243,17 @@ nwdaf_warnings(open5gs-nwdafd)
 target_link_libraries(open5gs-nwdafd PRIVATE nwdaf_lib)
 
 install(TARGETS open5gs-nwdafd DESTINATION /usr/local/bin)
+
+# ── Test tooling (QOL-01, QOL-02) ────────────────────────────────────────────
+# nwdaf-cli queries the 3GPP interfaces, nwdaf-fake-oam serves synthetic
+# Open5GS metrics, and nwdaf-notify-sink prints the notifications it receives.
+install(PROGRAMS tools/nwdaf-cli tools/nwdaf-fake-oam DESTINATION /usr/local/bin)
+if(NWDAF_USE_HTTP2)
+    add_executable(nwdaf-notify-sink tools/nwdaf_notify_sink.cpp)
+    nwdaf_warnings(nwdaf-notify-sink)
+    target_link_libraries(nwdaf-notify-sink PRIVATE nwdaf_lib)
+    install(TARGETS nwdaf-notify-sink DESTINATION /usr/local/bin)
+endif()
 install(FILES config/nwdaf.yaml DESTINATION /etc/open5gs)
 # H1.6: install the OpenAPI document where the SBI's default
 # openapi_spec_path expects it, so GET /openapi works out of the box.

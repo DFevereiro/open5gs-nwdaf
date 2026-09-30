@@ -136,6 +136,12 @@ IDs use the Rel-18 `NwdafEvent` spelling (`QOS_SUSTAINABILITY`, `RED_TRANS_EXP`)
 
 - `dashboard/`: a React + Recharts single-page app (`nwdaf_dashboard.jsx`) that is compiled in the browser by Babel standalone from `index.html`, with no build step. `dashboard/default` is an nginx site config that serves it and proxies `/nwdaf-analytics/` to port 7779.
 - `demo/`: a live demo — Open5GS v2.8.0 (PPA) + MongoDB + UERANSIM + this NWDAF and the dashboard in one privileged systemd container (`demo/run.sh`, walkthrough `nwdaf-demo`). It's the only place the NWDAF has run against real UEs; re-run it after collector changes, since the unit tests use synthetic log lines.
+- `tools/`: test tooling, installed to `/usr/local/bin`:
+  - `nwdaf-cli` (bash + curl + jq): a 3GPP consumer.
+  - `nwdaf-notify-sink` (C++ on `NwdafH2Server`, built with HTTP/2): prints notifications.
+  - `nwdaf-fake-oam` (Python stdlib): synthetic Open5GS AMF/SMF metrics.
+
+  Keep their metric names and request shapes in step with the collector and the SBI.
 - `grafana/nwdaf_dashboard.json`: a Grafana dashboard fed by `/metrics`.
 - `systemd/open5gs-nwdafd.service`, plus `cmake --install`. The install puts the binary in `/usr/local/bin`, the config in `/etc/open5gs/`, and the OpenAPI YAML in `/etc/open5gs/openapi/`, which is the default `openapi_spec_path`.
 - `nwdaf_cpp_setup_guide.md`: a long-form setup walkthrough for Ubuntu 20.04 and VS Code.

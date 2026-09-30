@@ -356,6 +356,20 @@ components:
               up:          { type: boolean, description: The last scrape succeeded. }
               samples:     { type: integer, description: Samples in the last successful scrape. }
               lastSuccess: { type: string, description: Time of the last successful scrape. }
+        rel18Analytics:
+          description: |
+            The analytics the 3GPP interfaces advertise to the NRF with this
+            configuration, and for each other implemented one the
+            configuration it lacks.
+          type: object
+          required: [advertised, notAdvertised]
+          properties:
+            advertised:
+              type: array
+              items: { type: string }
+            notAdvertised:
+              type: object
+              additionalProperties: { type: string }
         nfProfile:
           type: object
           required: [nfType, nfInstanceId, nwdafInfo]

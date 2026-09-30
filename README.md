@@ -248,7 +248,7 @@ Base URL: `http://<host>:7779`
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/nwdaf-analytics/v1/health` | Liveness probe (returns `UP` immediately) |
+| `GET` | `/nwdaf-analytics/v1/health` | Liveness probe (returns `UP` immediately). Also reports the transport profile, the metrics endpoints' scrape status (`oamSources`), and which Rel-18 analytics are advertised, with the missing configuration for the rest (`rel18Analytics`). |
 | `GET` | `/nwdaf-analytics/v1/ready` | Readiness probe (`READY` once ML models are fitted, `503` otherwise) |
 | `GET` | `/nwdaf-analytics/v1/metrics` | Prometheus metrics |
 | `GET` | `/nwdaf-analytics/v1/openapi` | The published OpenAPI 3.0 contract (`application/yaml`) |
@@ -268,7 +268,7 @@ Base URL: `http://<host>:7779`
 | `POST` | `/nnwdaf-eventssubscription/v1/subscriptions` | `Nnwdaf_EventsSubscription` Subscribe. Returns `201` + `Location`. Reporting: PERIODIC, ONE_TIME, and THRESHOLD / ON_EVENT_DETECTION on `nfLoadLvlThds` (CPU), `loadLevelThreshold`, `nsiLevelThrds` and `nwPerfRequs` (interpretation I-10). |
 | `PUT` / `DELETE` | `/nnwdaf-eventssubscription/v1/subscriptions/{subscriptionId}` | Modify / Unsubscribe |
 
-These are served over **HTTP/2** on `sbi_h2_port` (default 7780): h2c with prior knowledge, or h2 over TLS. For example, `curl --http2-prior-knowledge "http://127.0.0.1:7780/nnwdaf-analyticsinfo/v1/analytics?event-id=NF_LOAD&tgt-ue=%7B%22anyUe%22%3Atrue%7D"`. Notifications are `NnwdafEventsSubscriptionNotification` bodies, sent over HTTP/2 with `3gpp-Sbi-Callback: Nnwdaf_EventsSubscription_Notify`.
+These are served over **HTTP/2** on `sbi_h2_port` (default 7780): h2c with prior knowledge, or h2 over TLS. For example, `curl --http2-prior-knowledge "http://127.0.0.1:7780/nnwdaf-analyticsinfo/v1/analytics?event-id=NF_LOAD&tgt-ue=%7B%22anyUe%22%3Atrue%7D"`. Notifications are `NnwdafEventsSubscriptionNotification` bodies, sent over HTTP/2 with `3gpp-Sbi-Callback: Nnwdaf_EventsSubscription_Notify`. [`tools/nwdaf-cli`](#-test-tools) builds these queries for you.
 
 ### Examples
 
@@ -290,6 +290,30 @@ curl -X POST "http://127.0.0.1:7779/nwdaf-analytics/v1/subscriptions" \
   -H "Content-Type: application/json" \
   -d '{"eventId": "NF_LOAD", "notificationUri": "http://consumer:8080/notify"}'
 ```
+
+### 🧰 Test tools
+
+Three tools in [`tools/`](tools/) exercise the 3GPP interfaces without a consumer NF, UEs or a core. `cmake --install` puts them in `/usr/local/bin`.
+
+| Tool | What it does |
+|---|---|
+| `nwdaf-cli` | Nnwdaf_AnalyticsInfo and Nnwdaf_EventsSubscription from short options. It builds the JSON-encoded query parameters and subscription bodies and sends them over h2c. `nwdaf-cli health` shows what is advertised and why the rest isn't. Needs `curl` and `jq`. |
+| `nwdaf-notify-sink` | A notification consumer. It listens over h2c (Rel-18 notifications) and optionally HTTP/1.1 (`--http1-port`, operator-API ones), prints each notification and answers `204`. Built with `NWDAF_USE_HTTP2`. |
+| `nwdaf-fake-oam` | Synthetic Open5GS v2.8.0 AMF and SMF metrics (registered UEs and PDU sessions per slice, session setup counters), changed at runtime with `curl '…/set?ues=8'`. Python 3, no packages. |
+
+```bash
+nwdaf-fake-oam --ues 4 --req-rate 2 --fail-ratio 0.25 &   # oam_metrics_endpoints: AMF …:9090/amf/metrics, SMF …:9090/smf/metrics
+nwdaf-notify-sink --port 9999 &
+
+nwdaf-cli health
+nwdaf-cli get NETWORK_PERFORMANCE --nw-perf NUM_OF_UE --nw-perf SESS_SUCC_RATIO --tai 999-70-1
+nwdaf-cli get SLICE_LOAD_LEVEL --any-slice
+nwdaf-cli subscribe SLICE_LOAD_LEVEL --snssai 1 --threshold 60 --notify http://127.0.0.1:9999/n
+curl 'http://127.0.0.1:9090/set?ues=9'                    # the sink prints the threshold report
+nwdaf-cli unsubscribe sub-…
+```
+
+`nwdaf-cli --help` lists every option. `-v` shows the encoded request.
 
 ## ⚙️ Configuration
 
@@ -359,7 +383,7 @@ No Python runtime, no external ML framework — the entire inference path is in-
 
 ## 🧪 Testing
 
-120 Catch2 test cases across six suites, including a **mock Open5GS environment** so the full pipeline can be tested without a running core:
+271 Catch2 test cases across 18 suites, including a **mock Open5GS environment** so the full pipeline can be tested without a running core. The main ones:
 
 ```bash
 cmake -S . -B build -DNWDAF_BUILD_TESTS=ON
@@ -375,6 +399,9 @@ cd build && ctest --output-on-failure
 | `test_server_integration` | SBI endpoints, subscriptions, auth, rate limiting |
 | `test_arch_improvements` | Persistence, TLS config, weights validation |
 | `test_openapi_conformance` | Every endpoint validated against the published OpenAPI schemas |
+| `test_3gpp_sbi` | The Rel-18 Nnwdaf interfaces over HTTP/2: requests, failure semantics, subscriptions, notifications |
+| `test_slice_load`, `test_network_performance`, `test_threshold_reporting` | SLICE_LOAD_LEVEL / NSI_LOAD_LEVEL (I-9), NETWORK_PERFORMANCE (I-11), THRESHOLD reporting (I-10), against the official schemas |
+| `test_nrf_client`, `test_sbi_security`, `test_oauth` | NRF lifecycle against a mock NRF, mTLS, OAuth 2.0 token validation |
 
 ## 🗺 Roadmap
 
