@@ -66,6 +66,13 @@ nwdaf:
   #     max_pdu_sessions: 2000
   # slice_load_window_seconds: 300   # statistics period without startTs/endTs
 
+  # The tracking areas the core serves (Open5GS amf.yaml tai list). Needed for
+  # Rel-18 NETWORK_PERFORMANCE: the counts are per AMF, so they describe this
+  # whole area (interpretation I-11). tac: 4 or 6 hex digits, or a number.
+  # served_tai_list:
+  #   - {tac: "000001"}                  # mcc/mnc default to plmn_mcc/plmn_mnc
+  # network_performance_window_seconds: 300
+
   # AMF journald log parsing — Open5GS v2.7.6 uses "imsi-XXXXXXXXXXXXXXX"
   # Adjust supi_regex for earlier versions if needed
   amf_journal_lines: 500

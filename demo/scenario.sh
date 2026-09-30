@@ -70,6 +70,9 @@ analytics() {
     $H2 "$SBI/nnwdaf-analyticsinfo/v1/analytics?event-id=LOAD_LEVEL_INFORMATION&event-filter=$(urlq '{"anySlice":true}')" | jq .
     say "NSI_LOAD_LEVEL for S-NSSAI {sst:1}"
     $H2 "$SBI/nnwdaf-analyticsinfo/v1/analytics?event-id=NSI_LOAD_LEVEL&event-filter=$(urlq '{"nsiIdInfos":[{"snssai":{"sst":1}}]}')" | jq .
+    say "NETWORK_PERFORMANCE for the served area (TAC 1): registered UEs and PDU session success ratio (I-11)"
+    local area='{"tais":[{"plmnId":{"mcc":"999","mnc":"70"},"tac":"000001"}]}'
+    $H2 "$SBI/nnwdaf-analyticsinfo/v1/analytics?event-id=NETWORK_PERFORMANCE&tgt-ue=$any&event-filter=$(urlq "{\"nwPerfTypes\":[\"NUM_OF_UE\",\"SESS_SUCC_RATIO\"],\"networkArea\":$area}")" | jq .
     say "Operator API (dashboard): UE_COMMUNICATION and NETWORK_PERFORMANCE"
     curl -s "$OPS/analytics?analyticsId=UE_COMMUNICATION" | jq '{analyticsId, confidence, analData}'
     curl -s "$OPS/analytics?analyticsId=NETWORK_PERFORMANCE" | jq '{analyticsId, confidence, analData}'

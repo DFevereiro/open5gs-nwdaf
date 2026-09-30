@@ -1,4 +1,5 @@
 #include "nwdaf_analytics_catalogue.hpp"
+#include "nwdaf_3gpp_adapter.hpp"
 
 const std::set<std::string> NwdafAnalyticsCatalogue::KNOWN_REL18 = {
     "SLICE_LOAD_LEVEL", "NETWORK_PERFORMANCE", "NF_LOAD", "SERVICE_EXPERIENCE",
@@ -23,6 +24,7 @@ const std::set<std::string> NwdafAnalyticsCatalogue::REL18_IMPLEMENTED = {
     "NF_LOAD",
     "SLICE_LOAD_LEVEL",   // H1.2, I-9
     "NSI_LOAD_LEVEL",     // H1.2, I-9 (S-NSSAI level, no NSI IDs)
+    "NETWORK_PERFORMANCE",   // H1.4, I-11 (NUM_OF_UE, SESS_SUCC_RATIO; whole served area)
 };
 
 std::string NwdafAnalyticsCatalogue::fromAnalyticsInfoEventId(const std::string& event_id) {
@@ -49,6 +51,12 @@ std::set<std::string> NwdafAnalyticsCatalogue::rel18Advertised(const NwdafConfig
         // I-9: slice load level is defined only against a configured slice
         // capacity, whose counts come from the configured metrics endpoints.
         if ((id == "SLICE_LOAD_LEVEL" || id == "NSI_LOAD_LEVEL") && cfg.slice_capacity.empty()) continue;
+        // I-11: the served area must be configured, and at least one type's source.
+        if (id == "NETWORK_PERFORMANCE" &&
+            (cfg.served_tai_list.empty() ||
+             (!Nwdaf3gppAdapter::nwPerfTypeAvailable("NUM_OF_UE", cfg) &&
+              !Nwdaf3gppAdapter::nwPerfTypeAvailable("SESS_SUCC_RATIO", cfg))))
+            continue;
         out.insert(id);
     }
     return out;

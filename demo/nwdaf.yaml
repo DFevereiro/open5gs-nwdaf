@@ -34,6 +34,11 @@ nwdaf:
       max_pdu_sessions: 5
   slice_load_window_seconds: 30     # short, so the demo level follows the UEs quickly
 
+  # Open5GS's default AMF serves TAC 1 of PLMN 999-70 (NETWORK_PERFORMANCE, I-11).
+  served_tai_list:
+    - {tac: "000001"}
+  network_performance_window_seconds: 60
+
   throughput_interfaces: ["ogstun"]
   throughput_history_size: 360
   collection_interval_seconds: 5

@@ -6,6 +6,7 @@
 #include <iomanip>
 #include <cmath>
 #include <cctype>
+#include <cstdio>
 
 
 #include <regex>
@@ -120,6 +121,33 @@ NwdafConfig NwdafConfig::load(const std::string& yaml_path) {
             cfg.slice_capacity.push_back(c);
         }
     }
+
+    // H1.4: the served tracking areas (I-11). tac: 4 or 6 hex digits, or a number.
+    if (n["served_tai_list"]) {
+        static const std::regex TAC_RE("^([0-9a-fA-F]{4}|[0-9a-fA-F]{6})$");
+        for (const auto& e : n["served_tai_list"]) {
+            NwdafTai t;
+            t.mcc = e["mcc"] ? e["mcc"].as<std::string>() : cfg.plmn_mcc;
+            t.mnc = e["mnc"] ? e["mnc"].as<std::string>() : cfg.plmn_mnc;
+            if (!e["tac"])
+                throw std::runtime_error("served_tai_list: every entry needs a tac");
+            const std::string tac = e["tac"].as<std::string>();
+            long value;
+            if (std::regex_match(tac, TAC_RE)) value = std::stol(tac, nullptr, 16);
+            else if (!tac.empty() && tac.find_first_not_of("0123456789") == std::string::npos) value = std::stol(tac);
+            else throw std::runtime_error("served_tai_list: tac must be 4 or 6 hex digits or a number: " + tac);
+            if (value < 0 || value > 0xFFFFFF)
+                throw std::runtime_error("served_tai_list: tac out of range: " + tac);
+            char buf[8];
+            std::snprintf(buf, sizeof(buf), "%06lx", value);
+            t.tac = buf;
+            cfg.served_tai_list.push_back(t);
+        }
+    }
+    cfg.network_performance_window_seconds = n["network_performance_window_seconds"]
+        ? n["network_performance_window_seconds"].as<int>() : 300;
+    if (cfg.network_performance_window_seconds <= 0)
+        throw std::runtime_error("network_performance_window_seconds must be positive");
 
     cfg.slice_load_window_seconds = n["slice_load_window_seconds"]
         ? n["slice_load_window_seconds"].as<int>() : 300;

@@ -23,7 +23,7 @@
 //
 // Rules taken from the specification prose are pinned, with their clauses, in
 // docs/3gpp-rel18-compliance.md Appendix A; interpretations are recorded
-// there as I-1..I-10.
+// there as I-1..I-11.
 
 struct SbiRequest {
     std::string method;                              // "GET", "POST", ...
@@ -134,6 +134,22 @@ public:
         const nlohmann::json* req, const std::string& req_at,
         Nwdaf3gppAdapter::SliceQuery& query);
 
+    // H1.4: interpret the NETWORK_PERFORMANCE inputs (TS 29.520 V18.14.0
+    // §4.2.2.2.2, §4.3.2.2): target UE (anyUe only), networkArea (the whole
+    // served area, I-11), and the types — event-filter nwPerfTypes on
+    // AnalyticsInfo, nwPerfRequs on a subscription. `filter` is the
+    // event-filter or the EventSubscription (null when absent).
+    static std::optional<Rejection> interpretNetworkPerformance(
+        const nlohmann::json* target, const std::string& target_at,
+        const nlohmann::json* filter, const std::string& filter_at,
+        const nlohmann::json* req, const std::string& req_at,
+        bool subscription, const NwdafConfig& config,
+        Nwdaf3gppAdapter::NwPerfQuery& query);
+    static std::optional<Rejection> nwPerfHistoryCovers(const Nwdaf3gppAdapter::NwPerfQuery& query,
+                                                        const NwdafReportInputs& in,
+                                                        const NwdafConfig& config,
+                                                        const std::string& req_at);
+
     // H1.2: UNAVAILABLE_DATA when the requested period starts before the
     // held metrics history.
     static std::optional<Rejection> sliceHistoryCovers(const Nwdaf3gppAdapter::SliceQuery& query,
@@ -188,6 +204,9 @@ public:
 
 private:
     SbiResponse nfLoadInfo(std::map<std::string, nlohmann::json>& values,
+                           const std::optional<NwdafFeatureSet>& consumer,
+                           const NwdafFeatureSet& local);
+    SbiResponse nwPerfInfo(std::map<std::string, nlohmann::json>& values,
                            const std::optional<NwdafFeatureSet>& consumer,
                            const NwdafFeatureSet& local);
     SbiResponse sliceLoadInfo(const std::string& event,

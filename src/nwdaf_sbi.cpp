@@ -2,6 +2,7 @@
 #include "nwdaf_3gpp_adapter.hpp"
 #include "nwdaf_analytics_catalogue.hpp"
 #include <spdlog/spdlog.h>
+#include <algorithm>
 #include <ctime>
 #include <regex>
 #include <set>
@@ -151,6 +152,31 @@ std::optional<Nwdaf3gppAdapter::SliceQuery> sliceQueryOf(const json& es) {
 // EventNotifications for slice loads. EventNotification carries one
 // SliceLoadLevelInformation, whose single level applies to all its snssais,
 // so SLICE_LOAD_LEVEL gives one per distinct level; NSI_LOAD_LEVEL one in all.
+std::optional<Nwdaf3gppAdapter::NwPerfQuery> nwPerfQueryOf(const json& es, const NwdafConfig& config) {
+    Nwdaf3gppAdapter::NwPerfQuery q;
+    if (NwdafSbiService::interpretNetworkPerformance(member(es, "tgtUe"), "tgtUe", &es, "",
+                                                     member(es, "extraReportReq"), "extraReportReq",
+                                                     true, config, q))
+        return std::nullopt;
+    return q;
+}
+
+// UNAVAILABLE_DATA when a period starts before the held metrics history of a
+// needed source (one collection interval of slack).
+std::optional<Rejection> historyCovers(const std::optional<std::chrono::system_clock::time_point>& from,
+                                       bool need_amf, bool need_smf, const NwdafReportInputs& in,
+                                       const NwdafConfig& config, const std::string& req_at,
+                                       const std::string& what) {
+    if (!from) return std::nullopt;
+    const auto slack = std::chrono::seconds(config.collection_interval_seconds);
+    for (const auto* h : {need_amf ? &in.amf_oam : nullptr, need_smf ? &in.smf_oam : nullptr}) {
+        if (!h) continue;
+        if (h->empty() || h->front().at > *from + slack)
+            return Rejection{Rejection::UnavailableData, req_at, what + " statistics for that period are not held"};
+    }
+    return std::nullopt;
+}
+
 std::vector<json> sliceNotifications(const std::vector<NwdafSliceLoad>& loads, const json& head) {
     std::vector<json> out;
     if (loads.empty()) return out;
@@ -337,6 +363,7 @@ SbiResponse NwdafSbiService::getAnalytics(const SbiRequest& req) {
     if (event == "NF_LOAD") return nfLoadInfo(values, consumer, local);
     if (nwdaf_event == "SLICE_LOAD_LEVEL" || nwdaf_event == "NSI_LOAD_LEVEL")
         return sliceLoadInfo(nwdaf_event, values, consumer, local);
+    if (event == "NETWORK_PERFORMANCE") return nwPerfInfo(values, consumer, local);
 
     // An advertised ID always has a mapping; reaching here is a defect.
     spdlog::error("AnalyticsInfo: {} is advertised but has no Rel-18 mapping", event);
@@ -518,22 +545,111 @@ std::optional<NwdafSbiService::Rejection> NwdafSbiService::sliceHistoryCovers(
     const Nwdaf3gppAdapter::SliceQuery& query, const NwdafReportInputs& in,
     const NwdafConfig& config, const std::string& req_at)
 {
-    if (!query.from) return std::nullopt;
-    // A requested start before the oldest held scrape (one interval of slack)
-    // asks for statistics this NWDAF no longer holds.
-    const auto slack = std::chrono::seconds(config.collection_interval_seconds);
     bool need_amf = false, need_pdu = false;
     for (const auto& c : config.slice_capacity) {
         need_amf = need_amf || c.max_ues > 0;
         need_pdu = need_pdu || c.max_pdu_sessions > 0;
     }
-    for (const auto* h : {need_amf ? &in.amf_oam : nullptr, need_pdu ? &in.smf_oam : nullptr}) {
-        if (!h) continue;
-        if (h->empty() || h->front().at > *query.from + slack)
-            return Rejection{Rejection::UnavailableData, req_at,
-                             "slice load statistics for that period are not held"};
+    return historyCovers(query.from, need_amf, need_pdu, in, config, req_at, "slice load");
+}
+
+// ── H1.4: NETWORK_PERFORMANCE (I-11) ────────────────────────────────────────
+
+std::optional<NwdafSbiService::Rejection> NwdafSbiService::interpretNetworkPerformance(
+    const json* target, const std::string& target_at,
+    const json* filter, const std::string& filter_at,
+    const json* req, const std::string& req_at,
+    bool subscription, const NwdafConfig& config,
+    Nwdaf3gppAdapter::NwPerfQuery& query)
+{
+    // Target UE(s): supis, intGroupIds or anyUe (§4.2.2.2.2, §4.3.2.2). The
+    // counts are network-wide, so only anyUe is served.
+    if (!target)
+        return Rejection{Rejection::MandatoryMissing, target_at,
+                         "the target UE (supis, intGroupIds or anyUe) is mandatory for NETWORK_PERFORMANCE"};
+    if (target->contains("supis") || target->contains("intGroupIds"))
+        return Rejection{Rejection::MandatoryIncorrect, target_at,
+                         "per-UE or per-group NETWORK_PERFORMANCE is not supported by this NWDAF; use anyUe"};
+    if (!target->value("anyUe", false))
+        return Rejection{Rejection::MandatoryIncorrect, target_at,
+                         "NETWORK_PERFORMANCE requires supis, intGroupIds or anyUe=true"};
+
+    // The types: nwPerfTypes (AnalyticsInfo) or nwPerfRequs (subscription).
+    const char* types_key = subscription ? "nwPerfRequs" : "nwPerfTypes";
+    if (!filter || !filter->contains(types_key))
+        return Rejection{Rejection::MandatoryMissing, filter_at + "/" + types_key,
+                         std::string(types_key) + " is mandatory for NETWORK_PERFORMANCE"};
+    for (const auto& t : (*filter)[types_key]) {
+        const std::string type = subscription ? t.value("nwPerfType", std::string()) : t.get<std::string>();
+        if (!Nwdaf3gppAdapter::nwPerfTypeAvailable(type, config))
+            return Rejection{Rejection::Unsupported, filter_at + "/" + types_key,
+                             "network performance type " + type + " is not available from this NWDAF (I-11)"};
+        if (std::find(query.types.begin(), query.types.end(), type) == query.types.end())
+            query.types.push_back(type);
+    }
+
+    // networkArea is mandatory with anyUe; the counts are per AMF, so they
+    // describe the whole served area only (I-11).
+    if (!filter->contains("networkArea"))
+        return Rejection{Rejection::MandatoryMissing, filter_at + "/networkArea",
+                         "networkArea is mandatory for NETWORK_PERFORMANCE with anyUe"};
+    if (!Nwdaf3gppAdapter::coversServedArea((*filter)["networkArea"], config))
+        return Rejection{Rejection::Unsupported, filter_at + "/networkArea",
+                         "statistics are available only for the whole served area (every TAI in served_tai_list)"};
+
+    // Feature-bound refinements this NWDAF doesn't support are ignored (I-2).
+    for (const char* k : {"nwPerfReqs", "addNwPerfReqs", "spatialGranSizeTa", "spatialGranSizeCell",
+                          "temporalGranSize"})
+        if (filter->contains(k))
+            spdlog::info("NETWORK_PERFORMANCE: ignoring {}/{} (feature not supported, I-2)", filter_at, k);
+
+    if (req) {
+        const auto now = std::chrono::system_clock::now();
+        for (const char* k : {"startTs", "endTs"}) {
+            if (!req->contains(k)) continue;
+            auto t = parseDateTime((*req)[k].get<std::string>());
+            if (!t) return Rejection{Rejection::Unsupported, req_at,
+                                     std::string("/") + k + ": not an RFC 3339 date-time"};
+            if (*t > now)
+                return Rejection{Rejection::Unsupported, req_at,
+                                 "NETWORK_PERFORMANCE predictions are not supported by this NWDAF"};
+            (std::string(k) == "startTs" ? query.from : query.to) = *t;
+        }
     }
     return std::nullopt;
+}
+
+std::optional<NwdafSbiService::Rejection> NwdafSbiService::nwPerfHistoryCovers(
+    const Nwdaf3gppAdapter::NwPerfQuery& query, const NwdafReportInputs& in,
+    const NwdafConfig& config, const std::string& req_at)
+{
+    const auto has = [&](const char* t) {
+        return std::find(query.types.begin(), query.types.end(), t) != query.types.end();
+    };
+    return historyCovers(query.from, has("NUM_OF_UE"), has("SESS_SUCC_RATIO"), in, config, req_at,
+                         "network performance");
+}
+
+SbiResponse NwdafSbiService::nwPerfInfo(std::map<std::string, json>& values,
+                                        const std::optional<NwdafFeatureSet>& consumer,
+                                        const NwdafFeatureSet& local) {
+    Nwdaf3gppAdapter::NwPerfQuery query;
+    const NwdafReportInputs in = inputs();
+    auto rej = interpretNetworkPerformance(values.count("tgt-ue") ? &values["tgt-ue"] : nullptr, "tgt-ue",
+                                           values.count("event-filter") ? &values["event-filter"] : nullptr,
+                                           "event-filter",
+                                           values.count("ana-req") ? &values["ana-req"] : nullptr, "ana-req",
+                                           false, config_, query);
+    if (!rej) rej = nwPerfHistoryCovers(query, in, config_, "ana-req");
+    if (rej) return queryRejection(*rej, local);
+
+    const json infos = Nwdaf3gppAdapter::nwPerfInfos(config_, query, in.amf_oam, in.smf_oam,
+                                                     std::chrono::system_clock::now());
+    if (infos.empty()) return {204, "", "", {}};   // §4.3.2.2: no data for the period
+    json data = timeStamps(config_);
+    data["nwPerfs"] = infos;
+    if (consumer) data["suppFeat"] = local.intersect(*consumer).toHex();
+    return {200, "application/json", data.dump(), {}};
 }
 
 NwdafReportInputs NwdafSbiService::gatherInputs(const NwdafAnalyticsEngine& engine,
@@ -671,6 +787,22 @@ std::optional<NwdafSbiService::Rejection> NwdafSbiService::interpretThresholds(c
             spdlog::info("NSI_LOAD_LEVEL: ignoring {}/matchingDir (NsiLoadExt not supported, I-2)", at);
         return std::nullopt;
     }
+    if (event == "NETWORK_PERFORMANCE") {
+        // Table 5.1.6.2.22-1 NOTE 1: each requirement carries its threshold.
+        // NUM_OF_UE is a count (absoluteNum), SESS_SUCC_RATIO a percentage
+        // (relativeRatio).
+        for (const auto& r : es.value("nwPerfRequs", json::array())) {
+            const std::string type = r.value("nwPerfType", std::string());
+            const bool ratio = type == "SESS_SUCC_RATIO";
+            if (!r.contains("relativeRatio") && !r.contains("absoluteNum"))
+                return Rejection{Rejection::MandatoryMissing, at + "/nwPerfRequs",
+                                 "relativeRatio or absoluteNum is mandatory for THRESHOLD reporting of " + type};
+            if (r.contains(ratio ? "absoluteNum" : "relativeRatio"))
+                return Rejection{Rejection::Unsupported, at + "/nwPerfRequs",
+                                 type + " is reported as " + (ratio ? "relativeRatio" : "absoluteNum")};
+        }
+        return std::nullopt;
+    }
     return Rejection{Rejection::Unsupported, at, "THRESHOLD reporting is not supported for " + event};
 }
 
@@ -698,6 +830,28 @@ std::vector<json> NwdafSbiService::thresholdReports(const json& es, const NwdafR
         if (!crossed_nfs.empty()) {
             json n = head;
             n["nfLoadLevelInfos"] = crossed_nfs;
+            out.push_back(n);
+        }
+        return out;
+    }
+
+    if (event == "NETWORK_PERFORMANCE") {
+        const auto query = nwPerfQueryOf(es, config);
+        if (!query) return out;
+        json crossed_types = json::array();
+        for (const auto& info : Nwdaf3gppAdapter::nwPerfInfos(config, *query, in.amf_oam, in.smf_oam,
+                                                              std::chrono::system_clock::now())) {
+            const std::string type = info["nwPerfType"].get<std::string>();
+            const char* key = info.contains("relativeRatio") ? "relativeRatio" : "absoluteNum";
+            std::vector<int> levels;
+            for (const auto& r : es["nwPerfRequs"])
+                if (r.value("nwPerfType", std::string()) == type && r.contains(key)) levels.push_back(r[key].get<int>());
+            if (crossedAny(state, type, info[key].get<int>(), levels, direction(es)))
+                crossed_types.push_back(info);
+        }
+        if (!crossed_types.empty()) {
+            json n = head;
+            n["nwPerfs"] = crossed_types;
             out.push_back(n);
         }
         return out;
@@ -849,6 +1003,14 @@ NwdafSbiService::evaluateSubscription(const SbiRequest& req, SubscriptionOutcome
                 if (!in) in = inputs();
                 rej = sliceHistoryCovers(query, *in, config_, req_at);
             }
+        } else if (event == "NETWORK_PERFORMANCE") {
+            Nwdaf3gppAdapter::NwPerfQuery query;
+            rej = interpretNetworkPerformance(member(es, "tgtUe"), at + "/tgtUe", &es, at,
+                                              member(es, "extraReportReq"), req_at, true, config_, query);
+            if (!rej && query.from) {
+                if (!in) in = inputs();
+                rej = nwPerfHistoryCovers(query, *in, config_, req_at);
+            }
         }
         if (rej) {
             if (auto resp = subscriptionRejection(*rej, local, event, out.failed)) return resp;
@@ -912,6 +1074,14 @@ std::vector<json> NwdafSbiService::eventReports(const json& es, const NwdafRepor
         return sliceNotifications(Nwdaf3gppAdapter::sliceLoads(config, *query, in.amf_oam, in.smf_oam,
                                                                std::chrono::system_clock::now()),
                                   head);
+    } else if (event == "NETWORK_PERFORMANCE") {
+        const auto query = nwPerfQueryOf(es, config);
+        if (!query) return out;   // cannot happen for an accepted event
+        json infos = Nwdaf3gppAdapter::nwPerfInfos(config, *query, in.amf_oam, in.smf_oam,
+                                                   std::chrono::system_clock::now());
+        if (infos.empty()) return out;
+        head["nwPerfs"] = infos;
+        out.push_back(head);
     }
     return out;
 }

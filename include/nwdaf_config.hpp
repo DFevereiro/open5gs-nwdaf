@@ -16,6 +16,14 @@ struct NwdafSliceCapacity {
     std::string key() const { return sd.empty() ? std::to_string(sst) : std::to_string(sst) + "-" + sd; }
 };
 
+// H1.4: one tracking area this core serves (TS 29.571 Tai).
+struct NwdafTai {
+    std::string mcc, mnc;
+    std::string tac;   // 6 lower-case hex digits
+
+    bool operator==(const NwdafTai& o) const { return mcc == o.mcc && mnc == o.mnc && tac == o.tac; }
+};
+
 class NwdafConfig {
 public:
     static NwdafConfig load(const std::string& yaml_path);
@@ -59,6 +67,12 @@ public:
     // H1.2: period of slice load statistics when the consumer gives no
     // analytics target period (startTs/endTs): the last N seconds (I-9).
     int slice_load_window_seconds = 300;
+    // H1.4: the tracking areas the core serves. NETWORK_PERFORMANCE is served
+    // and advertised only when set: Open5GS counts are per AMF, so they apply
+    // to the whole served area (I-11).
+    std::vector<NwdafTai> served_tai_list;
+    // H1.4: period of NETWORK_PERFORMANCE statistics without startTs/endTs.
+    int network_performance_window_seconds = 300;
     int    throughput_history_size      = 360;
     int    collection_interval_seconds  = 10;
     int    amf_journal_lines            = 500;

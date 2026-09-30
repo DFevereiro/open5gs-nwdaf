@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
 
 using json = nlohmann::json;
 
@@ -114,5 +115,66 @@ json Nwdaf3gppAdapter::nsiLoadLevelInfos(const std::vector<NwdafSliceLoad>& load
     json out = json::array();
     for (const auto& l : loads)
         out.push_back({{"loadLevelInformation", l.load_level}, {"snssai", snssai(l.slice)}});
+    return out;
+}
+
+// ── H1.4: NETWORK_PERFORMANCE (I-11) ────────────────────────────────────────
+
+bool Nwdaf3gppAdapter::nwPerfTypeAvailable(const std::string& type, const NwdafConfig& cfg) {
+    if (type == "NUM_OF_UE")       return cfg.oam_metrics_endpoints.count("AMF") > 0;
+    if (type == "SESS_SUCC_RATIO") return cfg.oam_metrics_endpoints.count("SMF") > 0;
+    return false;
+}
+
+std::string Nwdaf3gppAdapter::taiKey(const json& tai) {
+    const json plmn = tai.value("plmnId", json::object());
+    long tac = 0;
+    try { tac = std::stol(tai.value("tac", std::string("0")), nullptr, 16); } catch (...) {}
+    char buf[8];
+    std::snprintf(buf, sizeof(buf), "%06lx", tac);
+    return plmn.value("mcc", std::string()) + "-" + plmn.value("mnc", std::string()) + "-" + buf;
+}
+
+json Nwdaf3gppAdapter::servedArea(const NwdafConfig& cfg) {
+    json tais = json::array();
+    for (const auto& t : cfg.served_tai_list)
+        tais.push_back({{"plmnId", {{"mcc", t.mcc}, {"mnc", t.mnc}}}, {"tac", t.tac}});
+    return {{"tais", tais}};
+}
+
+bool Nwdaf3gppAdapter::coversServedArea(const json& network_area, const NwdafConfig& cfg) {
+    if (cfg.served_tai_list.empty() || !network_area.contains("tais")) return false;
+    std::set<std::string> requested;
+    for (const auto& t : network_area["tais"]) requested.insert(taiKey(t));
+    const json served = servedArea(cfg);   // must outlive the loop
+    for (const auto& t : served["tais"])
+        if (!requested.count(taiKey(t))) return false;
+    return true;
+}
+
+json Nwdaf3gppAdapter::nwPerfInfos(const NwdafConfig& cfg, const NwPerfQuery& query,
+                                   const std::vector<NwdafOamScrape>& amf,
+                                   const std::vector<NwdafOamScrape>& smf,
+                                   std::chrono::system_clock::time_point now) {
+    const auto from = query.from.value_or(now - std::chrono::seconds(cfg.network_performance_window_seconds));
+    const auto to   = query.to.value_or(now);
+    json out = json::array();
+    for (const auto& type : query.types) {
+        json info = {{"networkArea", servedArea(cfg)}, {"nwPerfType", type}};
+        if (type == "NUM_OF_UE") {
+            const auto v = NwdafNetworkPerformanceCalculator::numOfUe(
+                amf, NwdafSliceLoadCalculator::plmnLabel(cfg), from, to);
+            if (!v) continue;
+            info["absoluteNum"] = std::lround(*v);
+        } else if (type == "SESS_SUCC_RATIO") {
+            const auto v = NwdafNetworkPerformanceCalculator::sessSuccRatio(smf, from, to);
+            // SamplingRatio is 1–100: a ratio that rounds to 0 % can't be sent (I-11).
+            if (!v || std::lround(*v) < 1) continue;
+            info["relativeRatio"] = std::lround(*v);
+        } else {
+            continue;
+        }
+        out.push_back(info);
+    }
     return out;
 }

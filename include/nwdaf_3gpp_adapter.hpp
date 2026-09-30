@@ -2,6 +2,7 @@
 #include "nwdaf_collector.hpp"
 #include "nwdaf_config.hpp"
 #include "nwdaf_slice_load.hpp"
+#include "nwdaf_network_performance.hpp"
 #include <chrono>
 #include <nlohmann/json.hpp>
 #include <cstddef>
@@ -80,4 +81,28 @@ public:
     // NsiLoadLevelInfo per slice, without nsiId (no network slice instances)
     // and without the NsiLoadExt attributes.
     static nlohmann::json nsiLoadLevelInfos(const std::vector<NwdafSliceLoad>& loads);
+
+    // H1.4: which network performance types and period a request covers.
+    struct NwPerfQuery {
+        std::vector<std::string> types;   // NetworkPerfType values, in request order
+        std::optional<std::chrono::system_clock::time_point> from, to;   // default: the last network_performance_window_seconds
+    };
+
+    // The types this NWDAF computes, given the configured sources (I-11):
+    // NUM_OF_UE needs the AMF metrics endpoint, SESS_SUCC_RATIO the SMF's.
+    static bool nwPerfTypeAvailable(const std::string& type, const NwdafConfig& cfg);
+
+    // TS 29.571 Tai as "<mcc>-<mnc>-<6 hex digit tac>".
+    static std::string taiKey(const nlohmann::json& tai);
+    // NetworkAreaInfo of the configured served area (tais).
+    static nlohmann::json servedArea(const NwdafConfig& cfg);
+    // True when `network_area` (NetworkAreaInfo) lists every served TAI: the
+    // measurements are per AMF, so they describe the whole served area only.
+    static bool coversServedArea(const nlohmann::json& network_area, const NwdafConfig& cfg);
+
+    // NetworkPerfInfo per requested type that has data for the period (I-11).
+    static nlohmann::json nwPerfInfos(const NwdafConfig& cfg, const NwPerfQuery& query,
+                                      const std::vector<NwdafOamScrape>& amf,
+                                      const std::vector<NwdafOamScrape>& smf,
+                                      std::chrono::system_clock::time_point now);
 };
