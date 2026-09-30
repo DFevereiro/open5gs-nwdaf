@@ -266,25 +266,26 @@ std::optional<NwdafSbiService::Rejection> NwdafSbiService::interpretNfLoad(
     // Target UE(s): "shall provide … supis or anyUe" (§4.2.2.2.2, §4.3.2.2).
     // Only the network-wide form is implemented: which AMF/SMF instance
     // serves a given SUPI is not observed.
-    if (!target) return Rejection{Rejection::TargetMissing, target_at, "mandatory for NF_LOAD"};
+    if (!target) return Rejection{Rejection::MandatoryMissing, target_at, "mandatory for NF_LOAD"};
     if (target->contains("supis"))
-        return Rejection{Rejection::TargetIncorrect, target_at,
+        return Rejection{Rejection::MandatoryIncorrect, target_at,
                          "/supis: per-UE NF_LOAD is not supported by this NWDAF; use anyUe"};
     if (!target->value("anyUe", false))
-        return Rejection{Rejection::TargetIncorrect, target_at, "NF_LOAD requires supis or anyUe=true"};
+        return Rejection{Rejection::MandatoryIncorrect, target_at, "NF_LOAD requires supis or anyUe=true"};
     for (auto it = target->begin(); it != target->end(); ++it)
         if (it.key() != "anyUe")
             spdlog::debug("NF_LOAD: ignoring {}/{} (not applicable to NF_LOAD)", target_at, it.key());
 
     // Filter attributes. Relevant to NF_LOAD per the prose: nfInstanceIds,
-    // nfSetIds, nfTypes, snssais, nfLoadLvlThds, matchingDir, networkArea
-    // (NfLoadExt), listOfAnaSubsets (EneNA).
-    static const std::set<std::string> unimplemented = {
-        "nfSetIds", "snssais", "nfLoadLvlThds", "matchingDir"};
+    // nfSetIds, nfTypes, snssais, networkArea (NfLoadExt), listOfAnaSubsets
+    // (EneNA). nfLoadLvlThds and matchingDir are reporting criteria, read by
+    // interpretThresholds.
+    static const std::set<std::string> unimplemented = {"nfSetIds", "snssais"};
     static const std::set<std::string> unsupported_feature = {  // I-2
         "networkArea", "listOfAnaSubsets"};
     for (auto it = filter.begin(); it != filter.end(); ++it) {
         const std::string& k = it.key();
+        if (k == "nfLoadLvlThds" || k == "matchingDir") continue;
         if (k == "nfInstanceIds") {
             for (const auto& id : it.value()) query.nf_instance_ids.insert(id.get<std::string>());
         } else if (k == "nfTypes") {
@@ -354,9 +355,9 @@ SbiResponse NwdafSbiService::nfLoadInfo(std::map<std::string, json>& values,
     if (rej) {
         const json ip = json::array({invalidParam(rej->where, rej->reason)});
         switch (rej->kind) {
-        case Rejection::TargetMissing:
+        case Rejection::MandatoryMissing:
             return problem(400, "MANDATORY_QUERY_PARAM_MISSING", "tgt-ue is mandatory for NF_LOAD", ip);
-        case Rejection::TargetIncorrect:
+        case Rejection::MandatoryIncorrect:
             return problem(400, "MANDATORY_QUERY_PARAM_INCORRECT", rej->reason, ip, local.toHex());
         case Rejection::Unsupported:
             return problem(400, "OPTIONAL_QUERY_PARAM_INCORRECT", rej->reason, ip, local.toHex());
@@ -397,7 +398,7 @@ std::optional<NwdafSbiService::Rejection> NwdafSbiService::interpretSliceLoad(
     // §4.3.2.2 / §4.2.2.2.2: the slices via snssais (nsiIdInfos for
     // NSI_LOAD_LEVEL) or anySlice.
     if (!filter)
-        return Rejection{Rejection::TargetMissing, filter_at,
+        return Rejection{Rejection::MandatoryMissing, filter_at,
                          std::string(slices) + " or anySlice is mandatory for " + event};
     if (filter->value("anySlice", false)) {
         query.any = true;
@@ -412,10 +413,10 @@ std::optional<NwdafSbiService::Rejection> NwdafSbiService::interpretSliceLoad(
             query.keys.insert(Nwdaf3gppAdapter::snssaiKey(e.at("snssai")));
         }
     } else if (filter->contains("anySlice")) {
-        return Rejection{Rejection::TargetIncorrect, filter_at,
+        return Rejection{Rejection::MandatoryIncorrect, filter_at,
                          std::string("anySlice is false and no ") + slices + " is given"};
     } else {
-        return Rejection{Rejection::TargetMissing, filter_at,
+        return Rejection{Rejection::MandatoryMissing, filter_at,
                          std::string(slices) + " or anySlice is mandatory for " + event};
     }
     // NsiLoadExt (networkArea, nfTypes) and EneNA (listOfAnaSubsets) are not
@@ -487,9 +488,9 @@ SbiResponse NwdafSbiService::sliceLoadInfo(const std::string& event,
     if (rej) {
         const json ip = json::array({invalidParam(rej->where, rej->reason)});
         switch (rej->kind) {
-        case Rejection::TargetMissing:
+        case Rejection::MandatoryMissing:
             return problem(400, "MANDATORY_QUERY_PARAM_MISSING", rej->reason, ip);
-        case Rejection::TargetIncorrect:
+        case Rejection::MandatoryIncorrect:
             return problem(400, "MANDATORY_QUERY_PARAM_INCORRECT", rej->reason, ip, local.toHex());
         case Rejection::Unsupported:
             return problem(400, "OPTIONAL_QUERY_PARAM_INCORRECT", rej->reason, ip, local.toHex());
@@ -512,6 +513,173 @@ SbiResponse NwdafSbiService::sliceLoadInfo(const std::string& event,
     else                             data["nsiLoadLevelInfos"]   = Nwdaf3gppAdapter::nsiLoadLevelInfos(loads);
     if (consumer) data["suppFeat"] = local.intersect(*consumer).toHex();
     return {200, "application/json", data.dump(), {}};
+}
+
+// ── H1.7: THRESHOLD reporting (I-10) ────────────────────────────────────────
+
+namespace {
+
+enum class Direction { Ascending, Descending, Crossed };
+
+// MatchingDirection (Table 5.1.6.3.12-1), default CROSSED.
+Direction direction(const json& es) {
+    const std::string d = es.value("matchingDir", std::string("CROSSED"));
+    if (d == "ASCENDING")  return Direction::Ascending;
+    if (d == "DESCENDING") return Direction::Descending;
+    return Direction::Crossed;
+}
+
+// I-10: a threshold is crossed ascending when the value goes from below it to
+// at or above it ("met or exceeded"), descending the other way.
+bool crossed(int prev, int cur, int threshold, Direction dir) {
+    const bool up   = prev < threshold && cur >= threshold;
+    const bool down = prev >= threshold && cur < threshold;
+    switch (dir) {
+    case Direction::Ascending:  return up;
+    case Direction::Descending: return down;
+    case Direction::Crossed:    return up || down;
+    }
+    return false;
+}
+
+// Crossing test for one entity; updates the entity's baseline.
+bool crossedAny(NwdafSbiService::ThresholdState& state, const std::string& entity, int value,
+                const std::vector<int>& thresholds, Direction dir) {
+    const auto it = state.find(entity);
+    bool hit = false;
+    if (it != state.end())
+        for (int t : thresholds) hit = hit || crossed(it->second, value, t, dir);
+    state[entity] = value;
+    return hit;
+}
+
+// NSI_LOAD_LEVEL: nsiLevelThrds holds one threshold for every slice, or one
+// per nsiIdInfos entry, in order (I-10).
+std::map<std::string, int> nsiThresholds(const json& es) {
+    std::map<std::string, int> out;
+    const json& thrs = es["nsiLevelThrds"];
+    if (thrs.size() == 1) { out[""] = thrs[0].get<int>(); return out; }
+    const json& infos = es["nsiIdInfos"];
+    for (size_t i = 0; i < infos.size(); ++i)
+        out[Nwdaf3gppAdapter::snssaiKey(infos[i].at("snssai"))] = thrs[i].get<int>();
+    return out;
+}
+
+}  // namespace
+
+bool NwdafSbiService::thresholdMode(const json& evt_req, const json& es) {
+    if (evt_req.contains("notifMethod"))
+        return evt_req["notifMethod"].get<std::string>() == "ON_EVENT_DETECTION";
+    return es.value("notificationMethod", std::string("THRESHOLD")) == "THRESHOLD";
+}
+
+std::optional<NwdafSbiService::Rejection> NwdafSbiService::interpretThresholds(const json& es,
+                                                                               const std::string& at) {
+    const std::string event = es.value("event", "");
+    if (event == "NF_LOAD") {
+        if (!es.contains("nfLoadLvlThds"))
+            return Rejection{Rejection::MandatoryMissing, at + "/nfLoadLvlThds",
+                             "nfLoadLvlThds is mandatory for THRESHOLD reporting of NF_LOAD"};
+        // Only the CPU usage is measured (I-5): a level on NRF load, memory or
+        // storage cannot be evaluated.
+        for (const auto& t : es["nfLoadLvlThds"]) {
+            if (!t.contains("nfCpuUsage") || t.size() != 1)
+                return Rejection{Rejection::Unsupported, at + "/nfLoadLvlThds",
+                                 "only nfCpuUsage thresholds are supported for NF_LOAD by this NWDAF"};
+        }
+        return std::nullopt;
+    }
+    if (event == "SLICE_LOAD_LEVEL") {
+        if (!es.contains("loadLevelThreshold"))
+            return Rejection{Rejection::MandatoryMissing, at + "/loadLevelThreshold",
+                             "loadLevelThreshold is mandatory for THRESHOLD reporting of SLICE_LOAD_LEVEL"};
+        return std::nullopt;
+    }
+    if (event == "NSI_LOAD_LEVEL") {
+        if (!es.contains("nsiLevelThrds"))
+            return Rejection{Rejection::MandatoryMissing, at + "/nsiLevelThrds",
+                             "nsiLevelThrds is mandatory for THRESHOLD reporting of NSI_LOAD_LEVEL"};
+        const size_t n = es["nsiLevelThrds"].size();
+        if (n != 1 && (!es.contains("nsiIdInfos") || es["nsiIdInfos"].size() != n))
+            return Rejection{Rejection::MandatoryIncorrect, at + "/nsiLevelThrds",
+                             "nsiLevelThrds must hold one threshold, or one per nsiIdInfos entry"};
+        // matchingDir needs NsiLoadExt, which is not supported (I-2).
+        if (es.contains("matchingDir"))
+            spdlog::info("NSI_LOAD_LEVEL: ignoring {}/matchingDir (NsiLoadExt not supported, I-2)", at);
+        return std::nullopt;
+    }
+    return Rejection{Rejection::Unsupported, at, "THRESHOLD reporting is not supported for " + event};
+}
+
+std::vector<json> NwdafSbiService::thresholdReports(const json& es, const NwdafReportInputs& in,
+                                                    const NwdafConfig& config, ThresholdState& state) {
+    std::vector<json> out;
+    const std::string event = es.value("event", "");
+    const auto now = std::chrono::system_clock::now();
+    const json head = {{"event", event},
+                       {"timeStampGen", formatDateTime(now)},
+                       {"expiry", formatDateTime(now + std::chrono::seconds(config.collection_interval_seconds))}};
+
+    if (event == "NF_LOAD") {
+        Nwdaf3gppAdapter::NfLoadQuery query;
+        if (interpretNfLoad(es.contains("tgtUe") ? &es["tgtUe"] : nullptr, "tgtUe", es, "",
+                            es.contains("extraReportReq") ? &es["extraReportReq"] : nullptr,
+                            "extraReportReq", query))
+            return out;
+        std::vector<int> levels;
+        for (const auto& t : es.value("nfLoadLvlThds", json::array())) levels.push_back(t.value("nfCpuUsage", 0));
+        // TS 23.288 §6.5.1: one threshold for all matching NFs; reported when
+        // met for at least one of them — here, the NFs that crossed it.
+        json crossed_nfs = json::array();
+        for (const auto& info : Nwdaf3gppAdapter::nfLoadLevelInfos(in.metrics, in.nf_instance_ids, in.statuses, query)) {
+            if (!info.contains("nfCpuUsage")) continue;
+            if (crossedAny(state, info["nfInstanceId"].get<std::string>(), info["nfCpuUsage"].get<int>(),
+                           levels, direction(es)))
+                crossed_nfs.push_back(info);
+        }
+        if (!crossed_nfs.empty()) {
+            json n = head;
+            n["nfLoadLevelInfos"] = crossed_nfs;
+            out.push_back(n);
+        }
+        return out;
+    }
+
+    if (event == "SLICE_LOAD_LEVEL" || event == "NSI_LOAD_LEVEL") {
+        Nwdaf3gppAdapter::SliceQuery query;
+        if (interpretSliceLoad(event, &es, "", es.contains("extraReportReq") ? &es["extraReportReq"] : nullptr,
+                               "extraReportReq", query))
+            return out;
+        const bool nsi = event == "NSI_LOAD_LEVEL";
+        const auto per_slice = nsi ? nsiThresholds(es) : std::map<std::string, int>{};
+        std::vector<NwdafSliceLoad> hits;
+        for (const auto& load : Nwdaf3gppAdapter::sliceLoads(config, query, in.amf_oam, in.smf_oam, now)) {
+            int threshold;
+            if (!nsi) {
+                threshold = es.value("loadLevelThreshold", 0);
+            } else {
+                auto it = per_slice.find(per_slice.count("") ? "" : load.slice.key());
+                if (it == per_slice.end()) continue;
+                threshold = it->second;
+            }
+            // SLICE_LOAD_LEVEL has no matchingDir; NSI's needs NsiLoadExt: CROSSED.
+            if (crossedAny(state, load.slice.key(), load.load_level, {threshold}, Direction::Crossed))
+                hits.push_back(load);
+        }
+        if (hits.empty()) return out;
+        if (nsi) {
+            json n = head;
+            n["nsiLoadLevelInfos"] = Nwdaf3gppAdapter::nsiLoadLevelInfos(hits);
+            out.push_back(n);
+        } else {
+            for (const auto& group : Nwdaf3gppAdapter::sliceLoadLevelGroups(hits)) {
+                json n = head;
+                n["sliceLoadLevelInfo"] = group;
+                out.push_back(n);
+            }
+        }
+    }
+    return out;
 }
 
 // ── Nnwdaf_EventsSubscription ───────────────────────────────────────────────
@@ -570,7 +738,7 @@ NwdafSbiService::evaluateSubscription(const SbiRequest& req, SubscriptionOutcome
     }
     if (evt_req.contains("notifMethod")) {
         const auto m = evt_req["notifMethod"].get<std::string>();
-        if (m != "PERIODIC" && m != "ONE_TIME")
+        if (m != "PERIODIC" && m != "ONE_TIME" && m != "ON_EVENT_DETECTION")
             unsupported.push_back(invalidParam("/evtReq/notifMethod",
                                                "notification method " + m + " is not supported by this NWDAF"));
     }
@@ -606,13 +774,21 @@ NwdafSbiService::evaluateSubscription(const SbiRequest& req, SubscriptionOutcome
 
         // Effective notification method: evtReq supersedes the event's own
         // (§4.2.2.2.2 NOTE 1); the event's default is THRESHOLD (Table
-        // 5.1.6.2.3-1 NOTE 2), which this NWDAF does not support yet.
+        // 5.1.6.2.3-1 NOTE 2).
         const std::string method = evt_req.contains("notifMethod")
             ? evt_req["notifMethod"].get<std::string>()
             : es.value("notificationMethod", std::string("THRESHOLD"));
-        if (method == "THRESHOLD") {
-            out.failed.push_back({{"event", event}, {"failureCode", "OTHER"}});
-            continue;
+        if (thresholdMode(evt_req, es)) {
+            const std::string at_i = "/eventSubscriptions/" + std::to_string(i);
+            if (auto rej = interpretThresholds(es, at_i)) {
+                const json ip = json::array({invalidParam(rej->where, rej->reason)});
+                if (rej->kind == Rejection::MandatoryMissing)
+                    return problem(400, "MANDATORY_IE_MISSING", rej->reason, ip);
+                if (rej->kind == Rejection::MandatoryIncorrect)
+                    return problem(400, "MANDATORY_IE_INCORRECT", rej->reason, ip, local.toHex());
+                out.failed.push_back({{"event", event}, {"failureCode", "OTHER"}});   // I-3
+                continue;
+            }
         }
         const bool has_period = evt_req.contains("notifMethod") ? evt_req.contains("repPeriod")
                                                                  : es.contains("repetitionPeriod");
@@ -635,9 +811,9 @@ NwdafSbiService::evaluateSubscription(const SbiRequest& req, SubscriptionOutcome
             if (rej) {
                 const json ip = json::array({invalidParam(rej->where, rej->reason)});
                 switch (rej->kind) {
-                case Rejection::TargetMissing:
+                case Rejection::MandatoryMissing:
                     return problem(400, "MANDATORY_IE_MISSING", "tgtUe is mandatory for NF_LOAD", ip);
-                case Rejection::TargetIncorrect:
+                case Rejection::MandatoryIncorrect:
                     return problem(400, "MANDATORY_IE_INCORRECT", rej->reason, ip, local.toHex());
                 case Rejection::Unsupported:   // I-3: this event fails, the others may proceed
                     out.failed.push_back({{"event", event}, {"failureCode", "OTHER"}});
@@ -656,9 +832,9 @@ NwdafSbiService::evaluateSubscription(const SbiRequest& req, SubscriptionOutcome
             if (rej) {
                 const json ip = json::array({invalidParam(rej->where, rej->reason)});
                 switch (rej->kind) {
-                case Rejection::TargetMissing:
+                case Rejection::MandatoryMissing:
                     return problem(400, "MANDATORY_IE_MISSING", rej->reason, ip);
-                case Rejection::TargetIncorrect:
+                case Rejection::MandatoryIncorrect:
                     return problem(400, "MANDATORY_IE_INCORRECT", rej->reason, ip, local.toHex());
                 case Rejection::Unsupported:   // I-3
                     out.failed.push_back({{"event", event}, {"failureCode", "OTHER"}});

@@ -6,6 +6,7 @@
 #include <nlohmann/json.hpp>
 #include <chrono>
 #include <ctime>
+#include <set>
 
 using json = nlohmann::json;
 
@@ -63,6 +64,16 @@ void NwdafNotifier::deliveryLoop() {
 
         auto subs = subs_.listAll();
         auto now  = std::chrono::steady_clock::now();
+
+        // Drop the threshold baselines of subscriptions that no longer exist.
+        {
+            std::set<std::string> live;
+            for (const auto& s : subs) live.insert(s.sub_id);
+            std::lock_guard<std::mutex> lk(ts_mutex_);
+            for (auto it = threshold_state_.begin(); it != threshold_state_.end();)
+                it = live.count(it->first.substr(0, it->first.find('#'))) ? std::next(it)
+                                                                         : threshold_state_.erase(it);
+        }
 
         for (const auto& sub : subs) {
             if (sub.status != "ACTIVE") continue;
@@ -165,8 +176,8 @@ void NwdafNotifier::deliverRel18(const Subscription& sub) {
     }
 
     // Effective method and period: evtReq supersedes the event's own
-    // (TS 29.520 V18.14.0 §4.2.2.2.2 NOTE 1). Only PERIODIC and ONE_TIME are
-    // accepted at subscription time.
+    // (TS 29.520 V18.14.0 §4.2.2.2.2 NOTE 1). THRESHOLD / ON_EVENT_DETECTION
+    // events are evaluated on every poll (I-10).
     const bool one_time = evt_req.value("notifMethod", std::string()) == "ONE_TIME";
     const auto now = std::chrono::steady_clock::now();
     NwdafReportInputs in;
@@ -178,9 +189,29 @@ void NwdafNotifier::deliverRel18(const Subscription& sub) {
 
     json reports = json::array();
     std::vector<std::string> due_keys;
+    // Threshold baselines to keep once the report is delivered: a failed
+    // delivery leaves the old baseline, so the crossing is reported again.
+    std::vector<std::pair<std::string, NwdafSbiService::ThresholdState>> pending;
     const auto& events = rep["eventSubscriptions"];
     for (size_t i = 0; i < events.size(); ++i) {
         const json& es = events[i];
+        const std::string tkey = sub.sub_id + "#" + std::to_string(i);
+        if (NwdafSbiService::thresholdMode(evt_req, es)) {
+            NwdafSbiService::ThresholdState next;
+            {
+                std::lock_guard<std::mutex> lk(ts_mutex_);
+                next = threshold_state_[tkey];
+            }
+            auto rs = NwdafSbiService::thresholdReports(es, in, config_, next);
+            if (rs.empty()) {
+                std::lock_guard<std::mutex> lk(ts_mutex_);
+                threshold_state_[tkey] = std::move(next);   // new baselines, nothing to report
+                continue;
+            }
+            for (auto& r : rs) reports.push_back(std::move(r));
+            pending.emplace_back(tkey, std::move(next));
+            continue;
+        }
         const int period = evt_req.contains("notifMethod")
             ? evt_req.value("repPeriod", 0) : es.value("repetitionPeriod", 0);
         const std::string key = sub.sub_id + "#" + std::to_string(i);
@@ -219,6 +250,7 @@ void NwdafNotifier::deliverRel18(const Subscription& sub) {
     {
         std::lock_guard<std::mutex> lk(ts_mutex_);
         for (const auto& k : due_keys) last_delivered_[k] = now;
+        for (auto& [k, st] : pending) threshold_state_[k] = std::move(st);
     }
     const int count = subs_.incrementReportCount(sub.sub_id);
     const int max_reports = evt_req.value("maxReportNbr", 0);

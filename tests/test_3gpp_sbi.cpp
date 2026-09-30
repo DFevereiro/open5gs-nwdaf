@@ -296,11 +296,6 @@ TEST_CASE("H1.7: unsupported reporting requirements are rejected, not ignored") 
     auto body = requireProblem(cli.Post(SUBS, sub.dump(), "application/json"),
                                400, "OPTIONAL_IE_INCORRECT");
     REQUIRE(body["invalidParams"][0]["param"] == "/evtReq/sampRatio");
-
-    sub["evtReq"] = {{"notifMethod", "ON_EVENT_DETECTION"}};
-    body = requireProblem(cli.Post(SUBS, sub.dump(), "application/json"),
-                          400, "OPTIONAL_IE_INCORRECT");
-    REQUIRE(body["invalidParams"][0]["param"] == "/evtReq/notifMethod");
 }
 
 TEST_CASE("H1.7: an EneNA-only attribute is ignored when EneNA is not supported (I-2)") {
@@ -557,9 +552,16 @@ TEST_CASE("H1.7: NF_LOAD subscription input rules") {
                             "application/json"),
                    400, "MANDATORY_IE_INCORRECT");
 
-    // Default notification method is THRESHOLD, which is not supported yet.
+    // The default notification method is THRESHOLD, which needs nfLoadLvlThds
+    // (Table 5.1.6.2.3-1 NOTE 4).
     json threshold = nfLoadSub();
     threshold["eventSubscriptions"][0].erase("notificationMethod");
+    b = requireProblem(cli.Post(SUBS, threshold.dump(), "application/json"),
+                       400, "MANDATORY_IE_MISSING");
+    REQUIRE(b["invalidParams"][0]["param"] == "/eventSubscriptions/0/nfLoadLvlThds");
+
+    // A level on something other than the CPU usage is not measured: the event fails (I-3).
+    threshold["eventSubscriptions"][0]["nfLoadLvlThds"] = {{{"nfMemoryUsage", 80}}};
     requireProblem(cli.Post(SUBS, threshold.dump(), "application/json"),
                    400, "MANDATORY_IE_INCORRECT");
 }
@@ -754,6 +756,54 @@ TEST_CASE("H1.7: notifications apply the subscription's filters and omit events 
     REQUIRE(infos.size() == 1);
     REQUIRE(infos[0]["nfType"] == "UPF");
     REQUIRE_FALSE(n["eventNotifications"][0].contains("failNotifyCode"));
+}
+
+TEST_CASE("H1.7: a crossed NF_LOAD threshold is notified once per crossing (I-10)") {
+    NwdafConfig cfg = sbiConfig();
+    cfg.nf_instance_ids = {{"AMF", AMF_ID}};
+    MockNwdafCollector collector(cfg);
+    NwdafAnalyticsEngine engine(collector, cfg);
+    NwdafSubscriptionStore subs;
+    NwdafSbiService sbi(engine, subs, cfg);
+    auto measure = [&](double cpu) {   // let the background loop cache it, as in production
+        collector.setNfMetrics({{"AMF", "active", 101, 1.0, 1000, cpu, "LOW"}});
+        collector.startBackgroundCollection();
+        std::this_thread::sleep_for(std::chrono::milliseconds(150));
+        collector.stopBackgroundCollection();
+    };
+    measure(30);
+    MockConsumer consumer;
+
+    SbiRequest req;
+    req.method = "POST";
+    req.path = SUBS;
+    req.headers = {{"content-type", "application/json"}};
+    req.body = json{{"notificationURI", "http://127.0.0.1:17790/notify"},
+                    {"eventSubscriptions", {{{"event", "NF_LOAD"}, {"tgtUe", {{"anyUe", true}}},
+                                             {"nfLoadLvlThds", {{{"nfCpuUsage", 50}}}},
+                                             {"matchingDir", "ASCENDING"}}}}}.dump();   // THRESHOLD by default
+    const SbiResponse created = sbi.dispatch(req);
+    INFO(created.body);
+    REQUIRE(created.status == 201);
+
+    NwdafNotifier notifier(subs, engine, 1, nullptr, nullptr, cfg);
+    notifier.start();
+    std::this_thread::sleep_for(std::chrono::milliseconds(2500));
+    REQUIRE(consumer.count() == 0);   // 30 %: the baseline, nothing crossed
+
+    measure(70);
+    REQUIRE(consumer.waitFor(1, std::chrono::seconds(8)) == 1);
+    std::this_thread::sleep_for(std::chrono::milliseconds(2500));
+    notifier.stop();
+    REQUIRE(consumer.count() == 1);   // still above: no second report
+
+    const json n = consumer.received.front();
+    static NwdafSchemaValidator official(NWDAF_3GPP_OPENAPI_DIR);
+    auto v = official.validate(
+        n, "TS29520_Nnwdaf_EventsSubscription.yaml#/components/schemas/NnwdafEventsSubscriptionNotification");
+    INFO((v.empty() ? std::string() : v.front().pointer + " " + v.front().reason));
+    REQUIRE(v.empty());
+    REQUIRE(n["eventNotifications"][0]["nfLoadLevelInfos"][0]["nfCpuUsage"] == 70);
 }
 #endif
 

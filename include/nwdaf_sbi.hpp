@@ -104,8 +104,8 @@ public:
     // operation maps a kind to its own spec-mandated response (Appendix A.2 / A.4).
     struct Rejection {
         enum Kind {
-            TargetMissing,     // conditionally mandatory target absent (tgt-ue; the slices)
-            TargetIncorrect,   // target present but unusable (neither anyUe nor supis; …)
+            MandatoryMissing,     // a conditionally mandatory input is absent (tgt-ue, the slices, thresholds)
+            MandatoryIncorrect,   // it is present but unusable (neither anyUe nor supis, …)
             Unsupported,       // a relevant attribute this NWDAF does not implement
             UnavailableData,   // past statistics requested; data not held (UNAVAILABLE_DATA)
         } kind;
@@ -149,6 +149,34 @@ public:
 
     // Current measurements for event reports.
     NwdafReportInputs inputs() const;
+
+    // H1.7: THRESHOLD / ON_EVENT_DETECTION reporting (TS 29.520 V18.14.0
+    // §4.2.2.2.2, Table 5.1.6.2.3-1; TS 23.288 §6.1.3; I-10).
+    //
+    // True when an event is reported on threshold crossings: evtReq
+    // notifMethod ON_EVENT_DETECTION, or the event's notificationMethod
+    // THRESHOLD or omitted (its default).
+    static bool thresholdMode(const nlohmann::json& evt_req, const nlohmann::json& event_subscription);
+
+    // The event's reporting thresholds: nfLoadLvlThds (NF_LOAD, nfCpuUsage
+    // only), loadLevelThreshold (SLICE_LOAD_LEVEL), nsiLevelThrds
+    // (NSI_LOAD_LEVEL). MandatoryMissing when absent (Table 5.1.6.2.3-1
+    // NOTE 4), Unsupported for a level this NWDAF does not measure.
+    static std::optional<Rejection> interpretThresholds(const nlohmann::json& event_subscription,
+                                                        const std::string& at);
+
+    // Last reported value per entity (NF instance ID or S-NSSAI key) of one
+    // event subscription.
+    using ThresholdState = std::map<std::string, int>;
+
+    // The EventNotifications for the entities whose value crossed a threshold
+    // in the matching direction since the previous call; `state` then holds
+    // the current values. An entity seen for the first time only sets its
+    // baseline (I-10).
+    static std::vector<nlohmann::json> thresholdReports(const nlohmann::json& event_subscription,
+                                                        const NwdafReportInputs& in,
+                                                        const NwdafConfig& config,
+                                                        ThresholdState& state);
 
 private:
     SbiResponse nfLoadInfo(std::map<std::string, nlohmann::json>& values,

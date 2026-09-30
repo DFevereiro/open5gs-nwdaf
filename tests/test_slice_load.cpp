@@ -296,21 +296,32 @@ TEST_CASE("H1.2: SLICE_LOAD_LEVEL and NSI_LOAD_LEVEL subscriptions report immedi
     REQUIRE(n[2]["nsiLoadLevelInfos"][0]["loadLevelInformation"] == 50);
 }
 
-TEST_CASE("H1.2: THRESHOLD slice load subscriptions are not supported yet") {
+TEST_CASE("H1.2: THRESHOLD slice load subscriptions need their thresholds") {
     SliceFixture f;
-    // The default method is THRESHOLD, which needs loadLevelThreshold.
-    const json sub = {
+    // The default method is THRESHOLD: loadLevelThreshold / nsiLevelThrds.
+    json sub = {
         {"notificationURI", "http://127.0.0.1:9/cb"},
         {"eventSubscriptions", {
             {{"event", "SLICE_LOAD_LEVEL"}, {"anySlice", true}, {"loadLevelThreshold", 80}},
-            {{"event", "NSI_LOAD_LEVEL"}, {"anySlice", true},
-             {"notificationMethod", "PERIODIC"}, {"repetitionPeriod", 60}}}}};
-    const SbiResponse res = f.subscribe(sub);
+            {{"event", "NSI_LOAD_LEVEL"}, {"nsiIdInfos", {{{"snssai", {{"sst", 1}, {"sd", "000001"}}}},
+                                                          {{"snssai", {{"sst", 2}}}}}},
+             {"nsiLevelThrds", {70, 30}}}}}};
+    SbiResponse res = f.subscribe(sub);
     INFO(res.body);
     REQUIRE(res.status == 201);
-    const json body = json::parse(res.body);
-    REQUIRE(body["failEventReports"] == json::array({{{"event", "SLICE_LOAD_LEVEL"}, {"failureCode", "OTHER"}}}));
-    REQUIRE(body["eventSubscriptions"].size() == 1);
+    json body = json::parse(res.body);
+    requireSchema(body, "TS29520_Nnwdaf_EventsSubscription.yaml#/components/schemas/NnwdafEventsSubscription");
+    REQUIRE_FALSE(body.contains("failEventReports"));
+
+    sub["eventSubscriptions"][0].erase("loadLevelThreshold");
+    res = f.subscribe(sub);
+    REQUIRE(problemStatus(res, "MANDATORY_IE_MISSING") == 400);
+    REQUIRE(json::parse(res.body)["invalidParams"][0]["param"] == "/eventSubscriptions/0/loadLevelThreshold");
+
+    // Two thresholds for three slices: neither one for all, nor one each.
+    sub["eventSubscriptions"][0]["loadLevelThreshold"] = 80;
+    sub["eventSubscriptions"][1]["nsiLevelThrds"] = {70, 30, 10};
+    REQUIRE(problemStatus(f.subscribe(sub), "MANDATORY_IE_INCORRECT") == 400);
 }
 
 TEST_CASE("H1.2: without a target period, statistics cover the last slice_load_window_seconds") {

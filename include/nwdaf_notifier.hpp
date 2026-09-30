@@ -8,7 +8,9 @@
 #include <mutex>
 #include <unordered_map>
 #include <chrono>
+#include <map>
 #include <string>
+#include "nwdaf_sbi.hpp"
 
 // NwdafNotifier — background push-delivery thread (TS 29.520 §5.3.3).
 //
@@ -38,8 +40,9 @@ private:
     void deliver(const Subscription& sub);
     // H1.7: Rel-18 Nnwdaf_EventsSubscription_Notify (TS 29.520 V18.14.0
     // §4.2.2.4): NnwdafEventsSubscriptionNotification with the
-    // 3gpp-Sbi-Callback header; per-event periods, ONE_TIME, maxReportNbr and
-    // monDur from the stored representation.
+    // 3gpp-Sbi-Callback header; per-event periods, ONE_TIME, THRESHOLD /
+    // ON_EVENT_DETECTION crossings (I-10), maxReportNbr and monDur from the
+    // stored representation.
     void deliverRel18(const Subscription& sub);
 
     NwdafConfig             config_;
@@ -58,4 +61,6 @@ private:
     mutable std::mutex ts_mutex_;
     std::unordered_map<std::string,
                        std::chrono::steady_clock::time_point> last_delivered_;
+    // H1.7 (I-10): last values per "subId#event index" for THRESHOLD reporting.
+    std::map<std::string, NwdafSbiService::ThresholdState> threshold_state_;
 };
