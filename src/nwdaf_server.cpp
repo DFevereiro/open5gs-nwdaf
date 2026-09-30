@@ -396,7 +396,7 @@ void NwdafServer::handleHealth(const httplib::Request& req, httplib::Response& r
             json out = json::array();
             for (const auto& src : engine_.getOamSources()) {
                 json s = {{"nfType", src.nf_type}, {"endpoint", src.endpoint},
-                          {"up", src.up}, {"samples", src.samples.size()}};
+                          {"up", src.up}, {"samples", src.count}};
                 if (src.last_success.time_since_epoch().count() != 0)
                     s["lastSuccess"] = NwdafSbiService::formatDateTime(src.last_success);
                 out.push_back(s);

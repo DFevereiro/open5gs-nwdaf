@@ -3,6 +3,7 @@
 #include "nwdaf_config.hpp"
 #include "nwdaf_slice_load.hpp"
 #include "nwdaf_network_performance.hpp"
+#include "nwdaf_ue_location.hpp"
 #include <chrono>
 #include <nlohmann/json.hpp>
 #include <cstddef>
@@ -105,4 +106,27 @@ public:
                                       const std::vector<NwdafOamScrape>& amf,
                                       const std::vector<NwdafOamScrape>& smf,
                                       std::chrono::system_clock::time_point now);
+
+    // H1.1: which UEs, area and period a UE_MOBILITY request covers (I-12).
+    struct UeMobilityQuery {
+        std::vector<std::string> supis;
+        std::optional<nlohmann::json> area;       // networkArea: tais and/or ncgis
+        std::optional<size_t> max_objects;        // time slots, or locations of a group
+        std::optional<std::chrono::system_clock::time_point> from, to;   // default: the last ue_mobility_window_seconds
+    };
+
+    // TS 29.571 UserLocation with nrLocation (tai, ncgi) of an AMF location.
+    static nlohmann::json userLocation(const NwdafUeLocation& loc);
+    // True when the location is in the NetworkAreaInfo (its tais or ncgis).
+    static bool inArea(const NwdafUeLocation& loc, const nlohmann::json& network_area);
+
+    // AnalyticsData.ueMobs / EventNotification.ueMobs (I-12). One SUPI: one
+    // UeMobility per stay, in time order (TS 23.288 Table 6.7.2.3-1: the time
+    // slot is the stay, its single location the TA and cell). Several SUPIs
+    // are one group: a single time slot for the period whose locations carry
+    // the time-averaged percentage of the group's UEs there (ratio),
+    // highest first. Empty when the UEs have no location in the period.
+    static nlohmann::json ueMobilities(const NwdafConfig& cfg, const UeMobilityQuery& query,
+                                       const NwdafUeLocationTracker& tracker,
+                                       std::chrono::system_clock::time_point now);
 };

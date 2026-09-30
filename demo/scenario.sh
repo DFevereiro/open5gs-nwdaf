@@ -73,6 +73,9 @@ analytics() {
     say "NETWORK_PERFORMANCE for the served area (TAC 1): registered UEs and PDU session success ratio (I-11)"
     local area='{"tais":[{"plmnId":{"mcc":"999","mnc":"70"},"tac":"000001"}]}'
     $H2 "$SBI/nnwdaf-analyticsinfo/v1/analytics?event-id=NETWORK_PERFORMANCE&tgt-ue=$any&event-filter=$(urlq "{\"nwPerfTypes\":[\"NUM_OF_UE\",\"SESS_SUCC_RATIO\"],\"networkArea\":$area}")" | jq .
+    say "UE_MOBILITY for the first UE: its TA and cell stays, from the AMF's UE list (I-12)"
+    local supi; supi=$(curl -s "http://127.0.0.5:9090/ue-info" | jq -r '.items[0].supi // empty')
+    [ -n "$supi" ] && $H2 "$SBI/nnwdaf-analyticsinfo/v1/analytics?event-id=UE_MOBILITY&tgt-ue=$(urlq "{\"supis\":[\"$supi\"]}")" | jq .
     say "Operator API (dashboard): UE_COMMUNICATION and NETWORK_PERFORMANCE"
     curl -s "$OPS/analytics?analyticsId=UE_COMMUNICATION" | jq '{analyticsId, confidence, analData}'
     curl -s "$OPS/analytics?analyticsId=NETWORK_PERFORMANCE" | jq '{analyticsId, confidence, analData}'

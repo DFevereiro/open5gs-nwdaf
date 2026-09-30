@@ -73,6 +73,13 @@ nwdaf:
   #   - {tac: "000001"}                  # mcc/mnc default to plmn_mcc/plmn_mnc
   # network_performance_window_seconds: 300
 
+  # The AMF's per-UE list (Open5GS v2.8.0 /ue-info on its metrics server):
+  # UE locations for Rel-18 UE_MOBILITY (interpretation I-12). It lists SUPIs
+  # without authentication: keep the metrics port internal.
+  # amf_ue_info_endpoint: "http://127.0.0.5:9090/ue-info"
+  # ue_mobility_window_seconds: 3600     # statistics period without startTs/endTs
+  # ue_location_history_seconds: 86400   # kept in memory only
+
   # AMF journald log parsing — Open5GS v2.7.6 uses "imsi-XXXXXXXXXXXXXXX"
   # Adjust supi_regex for earlier versions if needed
   amf_journal_lines: 500

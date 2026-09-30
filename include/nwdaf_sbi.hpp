@@ -23,7 +23,7 @@
 //
 // Rules taken from the specification prose are pinned, with their clauses, in
 // docs/3gpp-rel18-compliance.md Appendix A; interpretations are recorded
-// there as I-1..I-11.
+// there as I-1..I-12.
 
 struct SbiRequest {
     std::string method;                              // "GET", "POST", ...
@@ -44,6 +44,7 @@ struct NwdafReportInputs {
     std::map<std::string, std::string>     nf_instance_ids;
     std::vector<NwdafNfStatusObservation>  statuses;
     std::vector<NwdafOamScrape>            amf_oam, smf_oam;   // H1.2
+    std::shared_ptr<const NwdafUeLocationTracker> ue_locations;   // H1.1; null = none
 };
 
 struct SbiResponse {
@@ -150,6 +151,20 @@ public:
                                                         const NwdafConfig& config,
                                                         const std::string& req_at);
 
+    // H1.1: interpret the UE_MOBILITY inputs (TS 29.520 V18.14.0 §4.2.2.2.2,
+    // §4.3.2.2; I-12): the target UEs (supis; intGroupIds can't be resolved),
+    // the area of interest (networkArea tais / ncgis) and the period.
+    // `filter` is the event-filter or the EventSubscription (null when absent).
+    static std::optional<Rejection> interpretUeMobility(
+        const nlohmann::json* target, const std::string& target_at,
+        const nlohmann::json* filter, const std::string& filter_at,
+        const nlohmann::json* req, const std::string& req_at,
+        Nwdaf3gppAdapter::UeMobilityQuery& query);
+    static std::optional<Rejection> ueMobilityHistoryCovers(const Nwdaf3gppAdapter::UeMobilityQuery& query,
+                                                            const NwdafReportInputs& in,
+                                                            const NwdafConfig& config,
+                                                            const std::string& req_at);
+
     // H1.2: UNAVAILABLE_DATA when the requested period starts before the
     // held metrics history.
     static std::optional<Rejection> sliceHistoryCovers(const Nwdaf3gppAdapter::SliceQuery& query,
@@ -206,6 +221,9 @@ private:
     SbiResponse nfLoadInfo(std::map<std::string, nlohmann::json>& values,
                            const std::optional<NwdafFeatureSet>& consumer,
                            const NwdafFeatureSet& local);
+    SbiResponse ueMobilityInfo(std::map<std::string, nlohmann::json>& values,
+                               const std::optional<NwdafFeatureSet>& consumer,
+                               const NwdafFeatureSet& local);
     SbiResponse nwPerfInfo(std::map<std::string, nlohmann::json>& values,
                            const std::optional<NwdafFeatureSet>& consumer,
                            const NwdafFeatureSet& local);

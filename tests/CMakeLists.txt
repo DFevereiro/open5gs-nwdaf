@@ -35,6 +35,7 @@ add_executable(nwdaf_tests
     test_slice_load.cpp          # H1.2 SLICE_LOAD_LEVEL / NSI_LOAD_LEVEL (I-9)
     test_threshold_reporting.cpp # H1.7 THRESHOLD / ON_EVENT_DETECTION reporting (I-10)
     test_network_performance.cpp # H1.4 NETWORK_PERFORMANCE (I-11)
+    test_ue_mobility.cpp         # H1.1 UE_MOBILITY (I-12)
 )
 nwdaf_warnings(nwdaf_tests)
 target_include_directories(nwdaf_tests PRIVATE

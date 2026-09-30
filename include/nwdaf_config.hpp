@@ -73,6 +73,14 @@ public:
     std::vector<NwdafTai> served_tai_list;
     // H1.4: period of NETWORK_PERFORMANCE statistics without startTs/endTs.
     int network_performance_window_seconds = 300;
+    // H1.1: the AMF's per-UE JSON endpoint (Open5GS v2.8.0 /ue-info on its
+    // metrics server), polled every collection interval for UE locations.
+    // UE_MOBILITY is served and advertised only when set (I-12). Empty = off.
+    std::string amf_ue_info_endpoint;
+    // H1.1: period of UE_MOBILITY statistics without startTs/endTs.
+    int ue_mobility_window_seconds = 3600;
+    // H1.1: how long UE location history is kept (memory only).
+    int ue_location_history_seconds = 86400;
     int    throughput_history_size      = 360;
     int    collection_interval_seconds  = 10;
     int    amf_journal_lines            = 500;

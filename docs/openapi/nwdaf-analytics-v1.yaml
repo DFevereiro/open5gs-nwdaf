@@ -344,8 +344,9 @@ components:
           enum: [rel18-sbi, dev-legacy]
         oamSources:
           description: |
-            H1.1: the NFs' Prometheus metrics endpoints (`oam_metrics_endpoints`),
-            scraped every collection interval as OAM input.
+            H1.1: the NFs' Prometheus metrics endpoints (`oam_metrics_endpoints`)
+            and the AMF's UE list (`amf_ue_info_endpoint`), read every
+            collection interval as OAM input.
           type: array
           items:
             type: object
@@ -354,7 +355,7 @@ components:
               nfType:      { type: string }
               endpoint:    { type: string }
               up:          { type: boolean, description: The last scrape succeeded. }
-              samples:     { type: integer, description: Samples in the last successful scrape. }
+              samples:     { type: integer, description: Samples in the last successful scrape (for the AMF /ue-info, the UEs listed). }
               lastSuccess: { type: string, description: Time of the last successful scrape. }
         rel18Analytics:
           description: |

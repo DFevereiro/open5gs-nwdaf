@@ -36,9 +36,13 @@ static std::string nowISO() {
 
 NwdafCollector::NwdafCollector(const NwdafConfig& config)
     : config_(config),
+      ue_locations_(std::make_shared<NwdafUeLocationTracker>(
+          std::chrono::seconds(config.ue_location_history_seconds))),
       dl_ewma_(config.ewma_alpha),
       ul_ewma_(config.ewma_alpha)
 {
+    ue_info_source_.nf_type  = "AMF";
+    ue_info_source_.endpoint = config.amf_ue_info_endpoint;
     initMongo();
 #ifdef NWDAF_HAS_SQLITE
     initHistoryDb();  // PROD-01
@@ -539,12 +543,41 @@ std::vector<NwdafOamSource> NwdafCollector::collectOamMetrics() {
             src.up           = true;
             src.last_success = std::chrono::system_clock::now();
             src.samples      = NwdafPrometheusText::parse(*body);
+            src.count        = src.samples.size();
         } else {
             spdlog::debug("H1.1: metrics endpoint of {} unreachable ({})", type, url);
         }
         out.push_back(std::move(src));
     }
     return out;
+}
+
+bool NwdafCollector::collectUeLocations() {
+    const std::string& url = config_.amf_ue_info_endpoint;
+    if (url.empty()) return false;
+    // I-12: one poll is every page (at most 100 UEs each); a failed page
+    // leaves the trajectories as they were rather than end every stay.
+    const std::string sep = url.find('?') == std::string::npos ? "?" : "&";
+    std::vector<NwdafUeInfoItem> items;
+    bool ok = true;
+    for (int page = 0; page < 1000; ++page) {
+        const auto body = readOamMetrics(url + sep + "page=" + std::to_string(page) + "&page_size=100");
+        bool has_next = false;
+        auto parsed = body ? NwdafUeLocationTracker::parsePage(*body, has_next) : std::nullopt;
+        if (!parsed) { ok = false; break; }
+        items.insert(items.end(), parsed->begin(), parsed->end());
+        if (!has_next) break;
+    }
+    const auto now = std::chrono::system_clock::now();
+    if (ok) ue_locations_->observe(now, items);
+    else spdlog::debug("H1.1: AMF /ue-info unreachable or not a UE list ({})", url);
+    std::lock_guard<std::mutex> lk(mutex_);
+    ue_info_source_.up = ok;
+    if (ok) {
+        ue_info_source_.last_success = now;
+        ue_info_source_.count = items.size();
+    }
+    return ok;
 }
 
 std::vector<NwdafOamSource> NwdafCollector::getOamSources() const {
@@ -558,6 +591,7 @@ std::vector<NwdafOamSource> NwdafCollector::getOamSources() const {
         never.endpoint = url;
         out.push_back(never);
     }
+    if (!config_.amf_ue_info_endpoint.empty()) out.push_back(ue_info_source_);
     return out;
 }
 
@@ -687,6 +721,7 @@ void NwdafCollector::bgLoop() {
             auto smf = freshEvents(collectSmfEvents(), seen_smf_lines_);
             auto nf  = collectNfLoad();
             auto oam = collectOamMetrics();
+            collectUeLocations();   // H1.1: the tracker has its own lock
 
             {
                 std::lock_guard<std::mutex> lk(mutex_);

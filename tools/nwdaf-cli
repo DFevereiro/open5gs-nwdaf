@@ -61,6 +61,7 @@ examples:
   nwdaf-cli get NF_LOAD --nf-type AMF
   nwdaf-cli get SLICE_LOAD_LEVEL --any-slice
   nwdaf-cli get NETWORK_PERFORMANCE --nw-perf NUM_OF_UE --nw-perf SESS_SUCC_RATIO --tai 999-70-1
+  nwdaf-cli get UE_MOBILITY --supi imsi-999700000000001
   nwdaf-cli subscribe SLICE_LOAD_LEVEL --snssai 1 --threshold 60 --notify http://127.0.0.1:9999/n --imm
 EOF
 }

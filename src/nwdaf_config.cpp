@@ -149,6 +149,21 @@ NwdafConfig NwdafConfig::load(const std::string& yaml_path) {
     if (cfg.network_performance_window_seconds <= 0)
         throw std::runtime_error("network_performance_window_seconds must be positive");
 
+    if (n["amf_ue_info_endpoint"]) {
+        cfg.amf_ue_info_endpoint = n["amf_ue_info_endpoint"].as<std::string>();
+        if (!cfg.amf_ue_info_endpoint.empty() && cfg.amf_ue_info_endpoint.rfind("http://", 0) != 0 &&
+            cfg.amf_ue_info_endpoint.rfind("https://", 0) != 0)
+            throw std::runtime_error("amf_ue_info_endpoint is not an http(s) URL: " + cfg.amf_ue_info_endpoint);
+    }
+    cfg.ue_mobility_window_seconds = n["ue_mobility_window_seconds"]
+        ? n["ue_mobility_window_seconds"].as<int>() : 3600;
+    if (cfg.ue_mobility_window_seconds <= 0)
+        throw std::runtime_error("ue_mobility_window_seconds must be positive");
+    cfg.ue_location_history_seconds = n["ue_location_history_seconds"]
+        ? n["ue_location_history_seconds"].as<int>() : 86400;
+    if (cfg.ue_location_history_seconds <= 0)
+        throw std::runtime_error("ue_location_history_seconds must be positive");
+
     cfg.slice_load_window_seconds = n["slice_load_window_seconds"]
         ? n["slice_load_window_seconds"].as<int>() : 300;
     if (cfg.slice_load_window_seconds <= 0)

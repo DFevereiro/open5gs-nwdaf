@@ -165,6 +165,10 @@ std::vector<NwdafOamScrape> NwdafAnalyticsEngine::getOamHistory(const std::strin
     return collector_.getOamHistory(nf_type);
 }
 
+std::shared_ptr<const NwdafUeLocationTracker> NwdafAnalyticsEngine::getUeLocations() const {
+    return collector_.ueLocations();
+}
+
 // PROD-04: hot-reload — update contamination; takes effect on the next retrain()
 void NwdafAnalyticsEngine::updateConfig(double anomaly_contamination) {
     config_.anomaly_contamination = anomaly_contamination;

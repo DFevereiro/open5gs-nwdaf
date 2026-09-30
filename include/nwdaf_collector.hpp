@@ -1,6 +1,7 @@
 #pragma once
 #include "nwdaf_config.hpp"
 #include "nwdaf_prometheus.hpp"
+#include "nwdaf_ue_location.hpp"
 #include "ml/ewma_predictor.hpp"
 #include <string>
 #include <vector>
@@ -68,6 +69,7 @@ struct NwdafOamSource {
     bool        up = false;   // the last scrape succeeded
     std::chrono::system_clock::time_point last_success{};   // epoch = never
     std::vector<NwdafPromSample> samples;                    // of the last success
+    size_t count = 0;   // samples, or for the AMF /ue-info the UEs listed
 };
 
 // H1.1: one successful scrape, kept for statistics over a time window.
@@ -93,6 +95,9 @@ public:
     static int parseCountOutput(const std::string& output);
     // H1.1: scrape every configured oam_metrics_endpoints entry once.
     std::vector<NwdafOamSource> collectOamMetrics();
+    // H1.1: poll amf_ue_info_endpoint (every page) and feed the UE location
+    // tracker; false when it is not configured or a page failed (I-12).
+    bool collectUeLocations();
 
     void startBackgroundCollection();
     void stopBackgroundCollection();
@@ -108,6 +113,8 @@ public:
     // the successful scrapes of one NF type (at most throughput_history_size).
     std::vector<NwdafOamSource>   getOamSources() const;
     std::vector<NwdafOamScrape>   getOamHistory(const std::string& nf_type) const;
+    // H1.1: UE trajectories from the AMF /ue-info (I-12); thread-safe.
+    std::shared_ptr<const NwdafUeLocationTracker> ueLocations() const { return ue_locations_; }
 
     // BUG-02: EWMA predictions updated by bgLoop, read-only for analytics
     double getDlEwmaPrediction() const;
@@ -148,6 +155,8 @@ private:
     std::vector<NfMetric>        nf_metrics_;
     std::map<std::string, NwdafOamSource>             oam_sources_;   // H1.1
     std::map<std::string, std::deque<NwdafOamScrape>> oam_history_;   // H1.1
+    std::shared_ptr<NwdafUeLocationTracker> ue_locations_;            // H1.1, own lock
+    NwdafOamSource                          ue_info_source_;          // H1.1, under mutex_
 
     // BUG-01: per-PID CPU snapshot for delta computation
     struct CpuSnapshot {

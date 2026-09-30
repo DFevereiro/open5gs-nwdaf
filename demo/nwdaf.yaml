@@ -38,6 +38,9 @@ nwdaf:
   served_tai_list:
     - {tac: "000001"}
   network_performance_window_seconds: 60
+  # UE locations from the AMF's UE list (UE_MOBILITY, I-12).
+  amf_ue_info_endpoint: "http://127.0.0.5:9090/ue-info"
+  ue_mobility_window_seconds: 600
 
   throughput_interfaces: ["ogstun"]
   throughput_history_size: 360

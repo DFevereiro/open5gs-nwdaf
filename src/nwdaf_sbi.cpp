@@ -161,6 +161,14 @@ std::optional<Nwdaf3gppAdapter::NwPerfQuery> nwPerfQueryOf(const json& es, const
     return q;
 }
 
+std::optional<Nwdaf3gppAdapter::UeMobilityQuery> ueMobilityQueryOf(const json& es) {
+    Nwdaf3gppAdapter::UeMobilityQuery q;
+    if (NwdafSbiService::interpretUeMobility(member(es, "tgtUe"), "tgtUe", &es, "",
+                                             member(es, "extraReportReq"), "extraReportReq", q))
+        return std::nullopt;
+    return q;
+}
+
 // UNAVAILABLE_DATA when a period starts before the held metrics history of a
 // needed source (one collection interval of slack).
 std::optional<Rejection> historyCovers(const std::optional<std::chrono::system_clock::time_point>& from,
@@ -364,6 +372,7 @@ SbiResponse NwdafSbiService::getAnalytics(const SbiRequest& req) {
     if (nwdaf_event == "SLICE_LOAD_LEVEL" || nwdaf_event == "NSI_LOAD_LEVEL")
         return sliceLoadInfo(nwdaf_event, values, consumer, local);
     if (event == "NETWORK_PERFORMANCE") return nwPerfInfo(values, consumer, local);
+    if (event == "UE_MOBILITY") return ueMobilityInfo(values, consumer, local);
 
     // An advertised ID always has a mapping; reaching here is a defect.
     spdlog::error("AnalyticsInfo: {} is advertised but has no Rel-18 mapping", event);
@@ -652,6 +661,110 @@ SbiResponse NwdafSbiService::nwPerfInfo(std::map<std::string, json>& values,
     return {200, "application/json", data.dump(), {}};
 }
 
+// ── H1.1: UE_MOBILITY (I-12) ────────────────────────────────────────────────
+
+std::optional<NwdafSbiService::Rejection> NwdafSbiService::interpretUeMobility(
+    const json* target, const std::string& target_at,
+    const json* filter, const std::string& filter_at,
+    const json* req, const std::string& req_at,
+    Nwdaf3gppAdapter::UeMobilityQuery& query)
+{
+    // Target UE(s): supis or intGroupIds (§4.2.2.2.2, §4.3.2.2). Group
+    // membership isn't available to this NWDAF, so only SUPIs are served.
+    if (!target)
+        return Rejection{Rejection::MandatoryMissing, target_at,
+                         "the target UE (supis or intGroupIds) is mandatory for UE_MOBILITY"};
+    if (target->contains("intGroupIds"))
+        return Rejection{Rejection::Unsupported, target_at + "/intGroupIds",
+                         "internal groups can't be resolved by this NWDAF; use supis (I-12)"};
+    if (!target->contains("supis"))
+        return Rejection{Rejection::MandatoryIncorrect, target_at,
+                         "UE_MOBILITY requires supis or intGroupIds"};
+    for (const auto& s : (*target)["supis"]) {
+        const std::string supi = s.get<std::string>();
+        if (std::find(query.supis.begin(), query.supis.end(), supi) == query.supis.end())
+            query.supis.push_back(supi);
+    }
+
+    if (filter) {
+        // The area of interest: the AMF reports TAs and NR cells.
+        if (filter->contains("networkArea")) {
+            const json& area = (*filter)["networkArea"];
+            for (auto it = area.begin(); it != area.end(); ++it)
+                if (it.key() != "tais" && it.key() != "ncgis")
+                    return Rejection{Rejection::Unsupported, filter_at + "/networkArea/" + it.key(),
+                                     "the area of interest can be given as tais or ncgis only (I-12)"};
+            if (!area.contains("tais") && !area.contains("ncgis"))
+                return Rejection{Rejection::Unsupported, filter_at + "/networkArea",
+                                 "the area of interest must list tais or ncgis (I-12)"};
+            query.area = area;
+        }
+        // Feature-bound refinements this NWDAF doesn't support are ignored (I-2).
+        for (const char* k : {"visitedAreas", "ladnDnns", "ueMobilityReqs", "locGranularity", "locOrientation",
+                              "listOfAnaSubsets", "spatialGranSizeTa", "spatialGranSizeCell",
+                              "temporalGranSize", "fineGranAreas"})
+            if (filter->contains(k))
+                spdlog::info("UE_MOBILITY: ignoring {}/{} (feature not supported, I-2)", filter_at, k);
+    }
+
+    if (req) {
+        const auto now = std::chrono::system_clock::now();
+        for (auto it = req->begin(); it != req->end(); ++it) {
+            const std::string& k = it.key();
+            if (k == "startTs" || k == "endTs") {
+                auto t = parseDateTime(it.value().get<std::string>());
+                if (!t) return Rejection{Rejection::Unsupported, req_at, "/" + k + ": not an RFC 3339 date-time"};
+                if (*t > now)
+                    return Rejection{Rejection::Unsupported, req_at,
+                                     "UE_MOBILITY predictions are not supported by this NWDAF"};
+                (k == "startTs" ? query.from : query.to) = *t;
+                continue;
+            }
+            if (k == "maxObjectNbr") { query.max_objects = it.value().get<size_t>(); continue; }
+            if (k == "accuracy") continue;   // a preferred level; served best effort
+            if (k == "sampRatio" || k == "maxSupiNbr")
+                return Rejection{Rejection::Unsupported, req_at,
+                                 "/" + k + ": not supported for UE_MOBILITY by this NWDAF"};
+            spdlog::debug("UE_MOBILITY: ignoring {}/{}", req_at, k);
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<NwdafSbiService::Rejection> NwdafSbiService::ueMobilityHistoryCovers(
+    const Nwdaf3gppAdapter::UeMobilityQuery& query, const NwdafReportInputs& in,
+    const NwdafConfig& config, const std::string& req_at)
+{
+    if (!query.from) return std::nullopt;
+    const auto held = in.ue_locations ? in.ue_locations->heldSince(std::chrono::system_clock::now())
+                                      : std::nullopt;
+    if (!held || *held > *query.from + std::chrono::seconds(config.collection_interval_seconds))
+        return Rejection{Rejection::UnavailableData, req_at, "UE location statistics for that period are not held"};
+    return std::nullopt;
+}
+
+SbiResponse NwdafSbiService::ueMobilityInfo(std::map<std::string, json>& values,
+                                            const std::optional<NwdafFeatureSet>& consumer,
+                                            const NwdafFeatureSet& local) {
+    Nwdaf3gppAdapter::UeMobilityQuery query;
+    const NwdafReportInputs in = inputs();
+    auto rej = interpretUeMobility(values.count("tgt-ue") ? &values["tgt-ue"] : nullptr, "tgt-ue",
+                                   values.count("event-filter") ? &values["event-filter"] : nullptr,
+                                   "event-filter",
+                                   values.count("ana-req") ? &values["ana-req"] : nullptr, "ana-req", query);
+    if (!rej) rej = ueMobilityHistoryCovers(query, in, config_, "ana-req");
+    if (rej) return queryRejection(*rej, local);
+
+    const json mobs = in.ue_locations
+        ? Nwdaf3gppAdapter::ueMobilities(config_, query, *in.ue_locations, std::chrono::system_clock::now())
+        : json::array();
+    if (mobs.empty()) return {204, "", "", {}};   // §4.3.2.2: no data for the UE(s) and period
+    json data = timeStamps(config_);
+    data["ueMobs"] = mobs;
+    if (consumer) data["suppFeat"] = local.intersect(*consumer).toHex();
+    return {200, "application/json", data.dump(), {}};
+}
+
 NwdafReportInputs NwdafSbiService::gatherInputs(const NwdafAnalyticsEngine& engine,
                                                 const NwdafNfMonitor& nf_monitor) {
     NwdafReportInputs in;
@@ -660,6 +773,7 @@ NwdafReportInputs NwdafSbiService::gatherInputs(const NwdafAnalyticsEngine& engi
     in.statuses        = nf_monitor.statuses();
     in.amf_oam         = engine.getOamHistory("AMF");
     in.smf_oam         = engine.getOamHistory("SMF");
+    in.ue_locations    = engine.getUeLocations();
     return in;
 }
 
@@ -1003,6 +1117,14 @@ NwdafSbiService::evaluateSubscription(const SbiRequest& req, SubscriptionOutcome
                 if (!in) in = inputs();
                 rej = sliceHistoryCovers(query, *in, config_, req_at);
             }
+        } else if (event == "UE_MOBILITY") {
+            Nwdaf3gppAdapter::UeMobilityQuery query;
+            rej = interpretUeMobility(member(es, "tgtUe"), at + "/tgtUe", &es, at,
+                                      member(es, "extraReportReq"), req_at, query);
+            if (!rej && query.from) {
+                if (!in) in = inputs();
+                rej = ueMobilityHistoryCovers(query, *in, config_, req_at);
+            }
         } else if (event == "NETWORK_PERFORMANCE") {
             Nwdaf3gppAdapter::NwPerfQuery query;
             rej = interpretNetworkPerformance(member(es, "tgtUe"), at + "/tgtUe", &es, at,
@@ -1081,6 +1203,14 @@ std::vector<json> NwdafSbiService::eventReports(const json& es, const NwdafRepor
                                                    std::chrono::system_clock::now());
         if (infos.empty()) return out;
         head["nwPerfs"] = infos;
+        out.push_back(head);
+    } else if (event == "UE_MOBILITY") {
+        const auto query = ueMobilityQueryOf(es);
+        if (!query || !in.ue_locations) return out;
+        json mobs = Nwdaf3gppAdapter::ueMobilities(config, *query, *in.ue_locations,
+                                                   std::chrono::system_clock::now());
+        if (mobs.empty()) return out;
+        head["ueMobs"] = mobs;
         out.push_back(head);
     }
     return out;

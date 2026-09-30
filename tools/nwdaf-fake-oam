@@ -11,16 +11,23 @@ it can be fed without a core or UEs:
                 fivegs_smffunction_sm_pdusessioncreationfail{cause}    (counter)
                 fivegs_smffunction_sm_pdusessioncreationsucc{...}      (counter,
                   twice per success, like Open5GS v2.8.0)
+  /ue-info      the AMF's per-UE list (non-standard JSON, paged by 100): each
+                UE's SUPI and location (TAI, NR cell, detection time)
 
 Point the NWDAF at it:
   oam_metrics_endpoints:
     AMF: http://127.0.0.1:9090/amf/metrics
     SMF: http://127.0.0.1:9090/smf/metrics
+  amf_ue_info_endpoint: http://127.0.0.1:9090/ue-info
+
+The UEs (as many as registered on all slices, SUPIs imsi-<plmn>0000000001, …)
+cycle through the --area locations, one step every --move seconds.
 
 Change the state while it runs:
   curl 'http://127.0.0.1:9090/set?ues=8&sessions=6'           # every slice
   curl 'http://127.0.0.1:9090/set?snssai=1-000001&ues=2'       # one slice
   curl 'http://127.0.0.1:9090/set?req_rate=2&fail_ratio=0.25'  # session setups
+  curl 'http://127.0.0.1:9090/set?move=30'                     # UEs change location every 30 s
   curl  http://127.0.0.1:9090/                                 # current state
 """
 import argparse
@@ -44,6 +51,8 @@ class Core:
         self.req_rate = args.req_rate        # PDU session requests per second
         self.fail_ratio = args.fail_ratio    # share of them that fail
         self.wave = args.wave                # seconds; 0 = constant counts
+        self.areas = args.area               # [(tac, nci)]
+        self.move = args.move                # seconds per location step; 0 = static
         self.start = time.monotonic()
         self.last = self.start
         self.req = 0.0                       # fractional, to keep low rates exact
@@ -77,12 +86,15 @@ class Core:
                 self.fail_ratio = min(1.0, max(0.0, float(q["fail_ratio"])))
             if "wave" in q:
                 self.wave = max(0.0, float(q["wave"]))
+            if "move" in q:
+                self.move = max(0.0, float(q["move"]))
 
     def state(self):
         with self.lock:
             self._advance()
             return {"plmnid": self.plmn, "slices": self.slices, "req_rate": self.req_rate,
-                    "fail_ratio": self.fail_ratio, "wave": self.wave,
+                    "fail_ratio": self.fail_ratio, "wave": self.wave, "move": self.move,
+                    "areas": [{"tac": t, "nci": n} for t, n in self.areas],
                     "requests": int(self.req), "failures": int(self.fail)}
 
     def amf(self):
@@ -94,6 +106,34 @@ class Core:
                 out.append(f'fivegs_amffunction_rm_registeredsubnbr{{plmnid="{self.plmn}",snssai="{s}"}} '
                            f'{round(v["ues"] * k)}')
             return "\n".join(out) + "\n"
+
+    def ue_info(self, page, page_size):
+        with self.lock:
+            k = self._scale()
+            total = sum(round(v["ues"] * k) for v in self.slices.values())
+            elapsed = time.monotonic() - self.start
+            step = int(elapsed // self.move) if self.move else 0
+            # The AMF's timestamp: when the UE was detected at its location.
+            entered = time.time() - (elapsed - step * self.move if self.move else elapsed)
+            page_size = max(1, min(100, page_size))
+            items = []
+            for i in range(page * page_size, min(total, (page + 1) * page_size)):
+                tac, nci = self.areas[(i + step) % len(self.areas)]
+                items.append({
+                    "supi": f"imsi-{self.plmn}{i + 1:0{15 - len(self.plmn)}d}",
+                    "cm_state": "connected",
+                    "location": {
+                        "timestamp": int(entered * 1e6),
+                        "nr_tai": {"plmn": self.plmn, "tac_hex": f"{tac:06x}", "tac": tac},
+                        "nr_cgi": {"plmn": self.plmn, "nci": nci, "gnb_id": nci >> 14, "cell_id": nci & 0x3FFF},
+                        "last_visited_plmn_id": "000000"},
+                    "pdu_sessions_count": 1})
+            pager = {"page": page, "page_size": page_size, "count": len(items)}
+            if page > 0:
+                pager["prev"] = f"/ue-info?page={page - 1}"
+            if (page + 1) * page_size < total:
+                pager["next"] = f"/ue-info?page={page + 1}"
+            return json.dumps({"items": items, "pager": pager}) + "\n"
 
     def smf(self):
         with self.lock:
@@ -142,6 +182,9 @@ def handler_for(core, quiet):
                     self._send(200, core.amf(), "text/plain; version=0.0.4")
                 elif url.path in ("/smf/metrics", "/metrics/smf"):
                     self._send(200, core.smf(), "text/plain; version=0.0.4")
+                elif url.path == "/ue-info":
+                    body = core.ue_info(int(q.get("page", 0)), int(q.get("page_size", 100)))
+                    self._send(200, body, "application/json")
                 elif url.path == "/set":
                     core.set(q)
                     self._send(200, json.dumps(core.state(), indent=2) + "\n", "application/json")
@@ -174,14 +217,24 @@ def main():
                    help="share of the requests that fail (default 0.1)")
     p.add_argument("--wave", type=float, default=0,
                    help="make UE and session counts swing between 0 and the set value over this many seconds")
+    p.add_argument("--area", action="append", metavar="TAC[:NCI]",
+                   help="a UE location for /ue-info, repeatable (default 1:16, i.e. TAC 1, cell 16)")
+    p.add_argument("--move", type=float, default=0,
+                   help="UEs step to the next --area every this many seconds (default 0: static)")
     p.add_argument("--quiet", action="store_true", help="don't log requests")
     args = p.parse_args()
     args.slice = args.slice or ["1"]
+    areas = []
+    for a in args.area or ["1:16"]:
+        tac, _, nci = a.partition(":")
+        areas.append((int(tac, 0), int(nci, 0) if nci else 16))
+    args.area = areas
 
     core = Core(args)
     server = ThreadingHTTPServer((args.bind, args.port), handler_for(core, args.quiet))
     base = f"http://{args.bind}:{args.port}"
-    print(f"AMF metrics: {base}/amf/metrics\nSMF metrics: {base}/smf/metrics\ncontrol:     {base}/set?ues=N",
+    print(f"AMF metrics: {base}/amf/metrics\nSMF metrics: {base}/smf/metrics\n"
+          f"AMF UE list: {base}/ue-info\ncontrol:     {base}/set?ues=N",
           file=sys.stderr)
     try:
         server.serve_forever()

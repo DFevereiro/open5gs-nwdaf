@@ -3,6 +3,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <ctime>
 
 using json = nlohmann::json;
 
@@ -176,5 +177,117 @@ json Nwdaf3gppAdapter::nwPerfInfos(const NwdafConfig& cfg, const NwPerfQuery& qu
         }
         out.push_back(info);
     }
+    return out;
+}
+
+// ── H1.1: UE_MOBILITY (I-12) ────────────────────────────────────────────────
+
+namespace {
+
+// TS 29.571 DateTime, UTC, whole seconds.
+std::string dateTime(std::chrono::system_clock::time_point tp) {
+    const auto t = std::chrono::system_clock::to_time_t(tp);
+    struct tm tm_buf;
+    gmtime_r(&t, &tm_buf);
+    char buf[32];
+    std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm_buf);
+    return buf;
+}
+
+std::string locationKey(const NwdafUeLocation& loc) {
+    char nci[16];
+    std::snprintf(nci, sizeof(nci), "%09llx", static_cast<unsigned long long>(loc.nci));
+    return loc.mcc + "-" + loc.mnc + "-" + loc.tac + "-" + nci;
+}
+
+long seconds(std::chrono::system_clock::duration d) {
+    return std::lround(std::chrono::duration<double>(d).count());
+}
+
+}  // namespace
+
+json Nwdaf3gppAdapter::userLocation(const NwdafUeLocation& loc) {
+    char nci[16];
+    std::snprintf(nci, sizeof(nci), "%09llx", static_cast<unsigned long long>(loc.nci));
+    const json plmn = {{"mcc", loc.mcc}, {"mnc", loc.mnc}};
+    return {{"nrLocation", {{"tai", {{"plmnId", plmn}, {"tac", loc.tac}}},
+                            {"ncgi", {{"plmnId", plmn}, {"nrCellId", nci}}}}}};
+}
+
+bool Nwdaf3gppAdapter::inArea(const NwdafUeLocation& loc, const json& network_area) {
+    const std::string tai = loc.mcc + "-" + loc.mnc + "-" + loc.tac;
+    for (const auto& t : network_area.value("tais", json::array()))
+        if (taiKey(t) == tai) return true;
+    for (const auto& c : network_area.value("ncgis", json::array())) {
+        const json plmn = c.value("plmnId", json::object());
+        if (plmn.value("mcc", std::string()) != loc.mcc || plmn.value("mnc", std::string()) != loc.mnc) continue;
+        try {
+            if (std::stoull(c.value("nrCellId", std::string("x")), nullptr, 16) == loc.nci) return true;
+        } catch (...) {}
+    }
+    return false;
+}
+
+json Nwdaf3gppAdapter::ueMobilities(const NwdafConfig& cfg, const UeMobilityQuery& query,
+                                    const NwdafUeLocationTracker& tracker,
+                                    std::chrono::system_clock::time_point now) {
+    const auto from = query.from.value_or(now - std::chrono::seconds(cfg.ue_mobility_window_seconds));
+    const auto to   = query.to.value_or(now);
+    json out = json::array();
+    if (to <= from || query.supis.empty()) return out;
+
+    const auto staysOf = [&](const std::string& supi) {
+        std::vector<NwdafUeStay> kept;
+        for (auto& s : tracker.stays(supi, from, to)) {
+            if (query.area && !inArea(s.loc, *query.area)) continue;
+            // A stay that continues where the previous one at the same place ended is one stay.
+            if (!kept.empty() && kept.back().loc == s.loc && kept.back().to == s.from) kept.back().to = s.to;
+            else kept.push_back(s);
+        }
+        return kept;
+    };
+
+    if (query.supis.size() == 1) {
+        // One UE: each stay is a time slot with its one location, in time
+        // order (Table 6.7.2.3-1 NOTE 1); maxObjectNbr keeps the latest.
+        for (const auto& s : staysOf(query.supis.front())) {
+            const long duration = seconds(s.to - s.from);
+            if (duration < 1) continue;
+            out.push_back({{"ts", dateTime(s.from)}, {"duration", duration},
+                           {"locInfos", json::array({{{"loc", userLocation(s.loc)}}})}});
+        }
+        if (query.max_objects && out.size() > *query.max_objects)
+            out.erase(out.begin(), out.end() - static_cast<std::ptrdiff_t>(*query.max_objects));
+        return out;
+    }
+
+    // A group: the proportion of its UEs at each location, averaged over the
+    // period; rounded down so the ratios never sum above 100 %. The period
+    // starts no earlier than the polls: before them, UEs that have since
+    // left are unknown.
+    auto start = from;
+    if (const auto held = tracker.heldSince(now)) start = std::max(start, *held);
+    if (to <= start) return out;
+    std::map<std::string, std::pair<NwdafUeLocation, double>> time_at;   // key → location, UE-seconds
+    for (const auto& supi : query.supis)
+        for (auto s : staysOf(supi)) {
+            if (s.to <= start) continue;
+            s.from = std::max(s.from, start);
+            auto& e = time_at[locationKey(s.loc)];
+            e.first = s.loc;
+            e.second += std::chrono::duration<double>(s.to - s.from).count();
+        }
+    const double period = std::chrono::duration<double>(to - start).count();
+    std::vector<std::pair<long, NwdafUeLocation>> ratios;
+    for (const auto& [key, e] : time_at) {
+        const long ratio = static_cast<long>(std::floor(100.0 * e.second / (period * query.supis.size())));
+        if (ratio >= 1) ratios.push_back({ratio, e.first});   // SamplingRatio is 1–100
+    }
+    if (ratios.empty()) return out;
+    std::stable_sort(ratios.begin(), ratios.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    if (query.max_objects && ratios.size() > *query.max_objects) ratios.resize(*query.max_objects);
+    json locs = json::array();
+    for (const auto& [ratio, loc] : ratios) locs.push_back({{"loc", userLocation(loc)}, {"ratio", ratio}});
+    out.push_back({{"ts", dateTime(start)}, {"duration", seconds(to - start)}, {"locInfos", locs}});
     return out;
 }

@@ -4,7 +4,7 @@
 
 ### Production-grade Network Data Analytics Function for 5G Core — in modern C++
 
-**Standalone NWDAF that plugs into [Open5GS](https://open5gs.org) and brings native ML-driven analytics to your 5G core — Release 18 compliant for the supported scope.** Both Nnwdaf services over HTTP/2 with the NF_LOAD, SLICE_LOAD_LEVEL, NSI_LOAD_LEVEL and NETWORK_PERFORMANCE analytics, the NRF lifecycle and discovery, mTLS and OAuth2; scope and evidence in [`docs/3gpp-rel18-compliance.md`](docs/3gpp-rel18-compliance.md).
+**Standalone NWDAF that plugs into [Open5GS](https://open5gs.org) and brings native ML-driven analytics to your 5G core — Release 18 compliant for the supported scope.** Both Nnwdaf services over HTTP/2 with the NF_LOAD, SLICE_LOAD_LEVEL, NSI_LOAD_LEVEL, NETWORK_PERFORMANCE and UE_MOBILITY analytics, the NRF lifecycle and discovery, mTLS and OAuth2; scope and evidence in [`docs/3gpp-rel18-compliance.md`](docs/3gpp-rel18-compliance.md).
 
 [![CI](https://github.com/cem8kaya/open5gs-nwdaf/actions/workflows/ci.yml/badge.svg)](https://github.com/cem8kaya/open5gs-nwdaf/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
@@ -38,7 +38,7 @@ The **NWDAF (Network Data Analytics Function)** is the intelligence layer of the
 
 | Capability | Details |
 |---|---|
-| 🛰️ **3GPP Rel-18 SBI** | Nnwdaf_AnalyticsInfo and Nnwdaf_EventsSubscription (TS 29.520) over HTTP/2 on port 7780. Requests are validated against the official 3GPP OpenAPI files, with supported-features negotiation and the spec's failure semantics. Serves **NF_LOAD**, **SLICE_LOAD_LEVEL**, **NSI_LOAD_LEVEL** and **NETWORK_PERFORMANCE** (`NUM_OF_UE`, `SESS_SUCC_RATIO`) |
+| 🛰️ **3GPP Rel-18 SBI** | Nnwdaf_AnalyticsInfo and Nnwdaf_EventsSubscription (TS 29.520) over HTTP/2 on port 7780. Requests are validated against the official 3GPP OpenAPI files, with supported-features negotiation and the spec's failure semantics. Serves **NF_LOAD**, **SLICE_LOAD_LEVEL**, **NSI_LOAD_LEVEL**, **NETWORK_PERFORMANCE** (`NUM_OF_UE`, `SESS_SUCC_RATIO`) and **UE_MOBILITY** (TA and cell per UE) |
 | 🔔 **Subscriptions** | Subscribe / modify / unsubscribe with PERIODIC, ONE_TIME and THRESHOLD / ON_EVENT_DETECTION reporting, immediate reports, and notifications over HTTP/2 |
 | 📊 **Operator API** | 10 analytics on `/nwdaf-analytics/v1` for the dashboard and Prometheus: NF load, UE mobility, UE communication, abnormal behaviour, QoS sustainability, service experience, network performance, SM congestion, redundant transmission, dispersion |
 | 🤖 **Embedded ML** | Native C++ Isolation Forest (anomaly detection), EWMA predictor (load forecasting) and ITU-T G.107 E-model (MOS). Atomic model persistence, retraining via the API |
@@ -102,14 +102,14 @@ flowchart LR
 
 This table covers the **operator API** (`/nwdaf-analytics/v1/*`), where each ID
 is served in this project's own format. On the 3GPP interfaces, `NF_LOAD`,
-`SLICE_LOAD_LEVEL`, `NSI_LOAD_LEVEL` and `NETWORK_PERFORMANCE` are served in Rel-18 form; the others
+`SLICE_LOAD_LEVEL`, `NSI_LOAD_LEVEL`, `NETWORK_PERFORMANCE` and `UE_MOBILITY` are served in Rel-18 form; the others
 are withheld until their inputs exist. The
 per-ID reasons are in [`docs/3gpp-rel18-compliance.md`](docs/3gpp-rel18-compliance.md) §4.
 
 | Analytics ID | TS 23.288 V18.13.0 | ML backing | Status |
 |---|---|---|---|
 | `NF_LOAD` | §6.5 | EWMA load prediction | ✅ Implemented |
-| `UE_MOBILITY` | §6.7.2 | — | ✅ Implemented |
+| `UE_MOBILITY` | §6.7.2 | Journald registrations (operator API); TA and cell stays from the AMF's UE list on the 3GPP interfaces (I-12) | ✅ Implemented |
 | `UE_COMMUNICATION` | §6.7.3 | — | ✅ Implemented |
 | `ABNORMAL_BEHAVIOUR` | §6.7.5 | Isolation Forest | ✅ Implemented |
 | `SERVICE_EXPERIENCE` | §6.4 | MOS estimation | ✅ Implemented |
@@ -132,7 +132,7 @@ H1.1–H1.3 for the work that lifts those limits.
 
 IDs are spelled as in the Rel-18 `NwdafEvent` enum. The operator API still accepts the legacy spellings `QoS_SUSTAINABILITY` and `REDUNDANT_TRANSMISSION` on input.
 
-**Release 18.** The frozen Rel-18 baseline is [`docs/frozen-standards.md`](docs/frozen-standards.md), and the gap analysis is [`docs/3gpp-rel18-compliance.md`](docs/3gpp-rel18-compliance.md). Milestone **M1 passed** (2026-09-28): the NWDAF is **Release 18 compliant for the supported scope**, in builds with the `rel18-sbi` profile (HTTP/2 + TLS). The Rel-18 3GPP interfaces serve **NF_LOAD**, **SLICE_LOAD_LEVEL** and **NSI_LOAD_LEVEL** for slices with a configured capacity (load level per interpretation I-9), and **NETWORK_PERFORMANCE** (`NUM_OF_UE`, `SESS_SUCC_RATIO`) for the configured served area (I-11). The other analytics listed above are served on the operator API; their Rel-18 forms are not yet advertised, because they need inputs the scraped data path lacks. Open5GS v2.8.0 exposes no NF event-exposure services and no OAuth 2.0 (see the compliance doc).
+**Release 18.** The frozen Rel-18 baseline is [`docs/frozen-standards.md`](docs/frozen-standards.md), and the gap analysis is [`docs/3gpp-rel18-compliance.md`](docs/3gpp-rel18-compliance.md). Milestone **M1 passed** (2026-09-28): the NWDAF is **Release 18 compliant for the supported scope**, in builds with the `rel18-sbi` profile (HTTP/2 + TLS). The Rel-18 3GPP interfaces serve **NF_LOAD**, **SLICE_LOAD_LEVEL** and **NSI_LOAD_LEVEL** for slices with a configured capacity (load level per interpretation I-9), **NETWORK_PERFORMANCE** (`NUM_OF_UE`, `SESS_SUCC_RATIO`) for the configured served area (I-11), and **UE_MOBILITY** for SUPIs, from the AMF's per-UE list (I-12). The other analytics listed above are served on the operator API; their Rel-18 forms are not yet advertised, because they need inputs the scraped data path lacks. Open5GS v2.8.0 exposes no NF event-exposure services and no OAuth 2.0 (see the compliance doc).
 
 ### OpenAPI contract
 
@@ -267,7 +267,7 @@ Base URL: `http://<host>:7779`
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/nnwdaf-analyticsinfo/v1/analytics?event-id=…&tgt-ue=…` | `Nnwdaf_AnalyticsInfo`. `NF_LOAD`, when `nf_instance_ids` or `nrf_nf_discovery` is configured; `LOAD_LEVEL_INFORMATION` (slice load level) and `NSI_LOAD_LEVEL`, when `slice_capacity` is configured; `NETWORK_PERFORMANCE`, when `served_tai_list` is configured. |
+| `GET` | `/nnwdaf-analyticsinfo/v1/analytics?event-id=…&tgt-ue=…` | `Nnwdaf_AnalyticsInfo`. `NF_LOAD`, when `nf_instance_ids` or `nrf_nf_discovery` is configured; `LOAD_LEVEL_INFORMATION` (slice load level) and `NSI_LOAD_LEVEL`, when `slice_capacity` is configured; `NETWORK_PERFORMANCE`, when `served_tai_list` is configured; `UE_MOBILITY`, when `amf_ue_info_endpoint` is configured. |
 | `POST` | `/nnwdaf-eventssubscription/v1/subscriptions` | `Nnwdaf_EventsSubscription` Subscribe. Returns `201` + `Location`. Reporting: PERIODIC, ONE_TIME, and THRESHOLD / ON_EVENT_DETECTION on `nfLoadLvlThds` (CPU), `loadLevelThreshold`, `nsiLevelThrds` and `nwPerfRequs` (interpretation I-10). |
 | `PUT` / `DELETE` | `/nnwdaf-eventssubscription/v1/subscriptions/{subscriptionId}` | Modify / Unsubscribe |
 
@@ -302,7 +302,7 @@ Three tools in [`tools/`](tools/) exercise the 3GPP interfaces without a consume
 |---|---|
 | `nwdaf-cli` | Nnwdaf_AnalyticsInfo and Nnwdaf_EventsSubscription from short options. It builds the JSON-encoded query parameters and subscription bodies and sends them over h2c. `nwdaf-cli health` shows what is advertised and why the rest isn't. Needs `curl` and `jq`. |
 | `nwdaf-notify-sink` | A notification consumer. It listens over h2c (Rel-18 notifications) and optionally HTTP/1.1 (`--http1-port`, operator-API ones), prints each notification and answers `204`. Built with `NWDAF_USE_HTTP2`. |
-| `nwdaf-fake-oam` | Synthetic Open5GS v2.8.0 AMF and SMF metrics (registered UEs and PDU sessions per slice, session setup counters), changed at runtime with `curl '…/set?ues=8'`. Python 3, no packages. |
+| `nwdaf-fake-oam` | Synthetic Open5GS v2.8.0 AMF and SMF metrics (registered UEs and PDU sessions per slice, session setup counters) and the AMF's per-UE list (`/ue-info`, UEs moving between `--area` locations every `--move` seconds), changed at runtime with `curl '…/set?ues=8'`. Python 3, no packages. |
 
 ```bash
 nwdaf-fake-oam --ues 4 --req-rate 2 --fail-ratio 0.25 &   # oam_metrics_endpoints: AMF …:9090/amf/metrics, SMF …:9090/smf/metrics
@@ -337,6 +337,9 @@ Everything deployment-specific lives in [`config/nwdaf.yaml`](config/nwdaf.yaml)
 | `slice_capacity` | _(empty)_ | Per S-NSSAI admission capacity: `snssai` (`sst`, optional `sd`) with `max_ues` and/or `max_pdu_sessions`, as an NSACF would be configured. SLICE_LOAD_LEVEL and NSI_LOAD_LEVEL are served and advertised only for these slices. The load level is the higher of the UE and PDU-session occupancy in percent (interpretation I-9). `max_ues` needs `oam_metrics_endpoints.AMF`, `max_pdu_sessions` needs `.SMF`. |
 | `served_tai_list` | _(empty)_ | The tracking areas the core serves (`mcc`, `mnc` default to `plmn_mcc`/`plmn_mnc`; `tac` as 4 or 6 hex digits, or a number). NETWORK_PERFORMANCE is served and advertised only when set: Open5GS counts are per AMF, so requests must cover this whole area (I-11). |
 | `network_performance_window_seconds` | `300` | Period of the NETWORK_PERFORMANCE statistics when the consumer gives no `startTs`/`endTs`. |
+| `amf_ue_info_endpoint` | _(empty)_ | The AMF's per-UE list, polled every collection interval for UE locations (Open5GS v2.8.0: `http://127.0.0.5:9090/ue-info`, on its metrics server). UE_MOBILITY is served and advertised only when set (I-12). The list carries SUPIs and is served without authentication, so keep the metrics port internal. |
+| `ue_mobility_window_seconds` | `3600` | Period of the UE_MOBILITY statistics when the consumer gives no `startTs`/`endTs`. |
+| `ue_location_history_seconds` | `86400` | How long UE locations are kept, in memory only. |
 | `slice_load_window_seconds` | `300` | Period of the slice load statistics when the consumer gives no `startTs`/`endTs`: the last N seconds. |
 | `collection_interval_seconds` | `10` | Collector cadence |
 | `supi_regex` | `imsi-(\d{15})` | SUPI extraction pattern (Open5GS v2.7.6) |

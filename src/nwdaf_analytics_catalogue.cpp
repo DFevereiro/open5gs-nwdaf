@@ -25,6 +25,7 @@ const std::set<std::string> NwdafAnalyticsCatalogue::REL18_IMPLEMENTED = {
     "SLICE_LOAD_LEVEL",   // H1.2, I-9
     "NSI_LOAD_LEVEL",     // H1.2, I-9 (S-NSSAI level, no NSI IDs)
     "NETWORK_PERFORMANCE",   // H1.4, I-11 (NUM_OF_UE, SESS_SUCC_RATIO; whole served area)
+    "UE_MOBILITY",           // H1.1, I-12 (SUPIs; TA and cell from the AMF /ue-info)
 };
 
 std::string NwdafAnalyticsCatalogue::fromAnalyticsInfoEventId(const std::string& event_id) {
@@ -60,6 +61,9 @@ std::map<std::string, std::string> NwdafAnalyticsCatalogue::rel18NotAdvertised(c
     else if (!Nwdaf3gppAdapter::nwPerfTypeAvailable("NUM_OF_UE", cfg) &&
              !Nwdaf3gppAdapter::nwPerfTypeAvailable("SESS_SUCC_RATIO", cfg))
         out["NETWORK_PERFORMANCE"] = "no AMF or SMF in oam_metrics_endpoints";
+    // I-12: UE locations come from the AMF's per-UE list.
+    if (cfg.amf_ue_info_endpoint.empty())
+        out["UE_MOBILITY"] = "amf_ue_info_endpoint is not configured";
     return out;
 }
 
