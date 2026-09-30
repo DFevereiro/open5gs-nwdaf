@@ -31,23 +31,26 @@ The **NWDAF (Network Data Analytics Function)** is the intelligence layer of the
 
 - **Zero-friction Open5GS integration** — registers with the NRF, reads journald/`/proc`/`/sys`/MongoDB, no core patches required
 - **Native, dependency-light ML** — Isolation Forest anomaly detection and EWMA prediction implemented in pure C++, no Python runtime, no TensorFlow
-- **Spec-anchored design:** the analytics IDs follow TS 23.288, and NRF registration follows TS 29.510. The current SBI is a custom API modelled on TS 29.520. Moving it onto the standard Rel-18 resources, data types and HTTP/2 transport is tracked in [`docs/3gpp-rel18-compliance.md`](docs/3gpp-rel18-compliance.md).
+- **Standards-first:** the Rel-18 Nnwdaf services (TS 29.520) over HTTP/2, with requests validated against the official 3GPP OpenAPI files, and the TS 29.510 NRF lifecycle. It advertises only what it can truthfully serve; scope and evidence are in [`docs/3gpp-rel18-compliance.md`](docs/3gpp-rel18-compliance.md).
 - **Ops-ready from day one** — Prometheus metrics, Grafana dashboard, React web UI, systemd unit, hardened Docker build, TLS/mTLS, rate limiting
 
 ## ✨ Features
 
 | Capability | Details |
 |---|---|
-| 📊 **10 Analytics IDs** | NF load, UE mobility, UE communication, abnormal behaviour, QoS sustainability, service experience, network performance, SM congestion, redundant transmission, dispersion |
-| 🤖 **Embedded ML** | Native C++ Isolation Forest (anomaly detection) + EWMA predictor (load forecasting), atomic model persistence, on-demand retraining via API |
-| 🔔 **Subscriptions** | `Nnwdaf_EventsSubscription` create/list/get/delete with push notification delivery (background notifier thread) |
-| 🗄️ **Persistence** | SQLite-backed throughput history and subscription store — survives restarts |
-| 🛰️ **NRF Integration** | Registration + heartbeat per TS 29.510 §5.3.2.4 |
-| 🔐 **Security** | TLS on the SBI with opt-in mutual TLS (`tls_ca_file`), per-IP + global token-bucket rate limiting, hardened build flags (`-D_FORTIFY_SOURCE=2`, PIE, RELRO). OAuth 2.0 access-token validation on the 3GPP interfaces (`oauth_enabled`). |
-| 📈 **Observability** | Prometheus `/metrics`, Grafana dashboard JSON, health/readiness probes |
+| 🛰️ **3GPP Rel-18 SBI** | Nnwdaf_AnalyticsInfo and Nnwdaf_EventsSubscription (TS 29.520) over HTTP/2 on port 7780. Requests are validated against the official 3GPP OpenAPI files, with supported-features negotiation and the spec's failure semantics. Serves **NF_LOAD**, **SLICE_LOAD_LEVEL**, **NSI_LOAD_LEVEL** and **NETWORK_PERFORMANCE** (`NUM_OF_UE`, `SESS_SUCC_RATIO`) |
+| 🔔 **Subscriptions** | Subscribe / modify / unsubscribe with PERIODIC, ONE_TIME and THRESHOLD / ON_EVENT_DETECTION reporting, immediate reports, and notifications over HTTP/2 |
+| 📊 **Operator API** | 10 analytics on `/nwdaf-analytics/v1` for the dashboard and Prometheus: NF load, UE mobility, UE communication, abnormal behaviour, QoS sustainability, service experience, network performance, SM congestion, redundant transmission, dispersion |
+| 🤖 **Embedded ML** | Native C++ Isolation Forest (anomaly detection), EWMA predictor (load forecasting) and ITU-T G.107 E-model (MOS). Atomic model persistence, retraining via the API |
+| 📥 **Data collection** | No core patches: systemd unit states, journald, `/proc`, `/sys` throughput and MongoDB, plus each NF's Prometheus metrics (TS 28.552 measurements, per slice) as OAM input |
+| 🧭 **NRF Integration** | TS 29.510 NFRegister, heartbeat with re-registration, NFDeregister, and NF instance IDs and NF status from the NRF. The NRF profile advertises only what the configuration supports |
+| 🔐 **Security** | TLS and mutual TLS on both listeners, OAuth 2.0 access-token validation on the 3GPP interfaces (TS 33.501), NRF certificate verification, per-IP and global rate limiting, hardened build flags (`-D_FORTIFY_SOURCE=2`, PIE, RELRO) |
+| 🗄️ **Persistence** | SQLite-backed throughput history and subscription store that survive restarts |
+| 📈 **Observability** | Prometheus `/metrics`, Grafana dashboard JSON, readiness probe, and a `/health` that shows metric-scrape status and which Rel-18 analytics are advertised (with the missing configuration for the rest) |
 | 🖥️ **Web Dashboard** | React + Recharts "NWDAF Intelligence" UI: live throughput, anomaly detection, MOS scores, traffic simulator, subscription management |
-| 🧪 **Tested** | 85 Catch2 test cases: unit, integration, and a mock Open5GS environment |
-| 📦 **Deployable** | Reproducible two-stage Docker build (Ubuntu 22.04, pinned deps), systemd service, `cmake --install` |
+| 🧰 **Test tools** | `nwdaf-cli` (3GPP consumer), `nwdaf-notify-sink` (prints notifications), `nwdaf-fake-oam` (synthetic Open5GS metrics): exercise the 3GPP interfaces without a core or UEs |
+| 🧪 **Tested** | 271 Catch2 test cases: unit, integration over HTTP/2, official-schema conformance, a mock Open5GS and a mock NRF. Checked live against Open5GS v2.8.0 with UERANSIM UEs ([`demo/`](demo/)) |
+| 📦 **Deployable** | Two-stage Docker build (Ubuntu 22.04), systemd service, `cmake --install`; CI on Ubuntu 22.04 and 20.04 |
 
 ## 🏗 Architecture
 
