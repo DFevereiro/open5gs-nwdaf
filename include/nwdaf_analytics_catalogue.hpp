@@ -38,6 +38,9 @@ public:
     // The NwdafEvent that a Nnwdaf_AnalyticsInfo EventId value denotes:
     // LOAD_LEVEL_INFORMATION is SLICE_LOAD_LEVEL; other values are the same.
     static std::string fromAnalyticsInfoEventId(const std::string& event_id);
+    // The reverse: the EventId of a NwdafEvent (SLICE_LOAD_LEVEL is
+    // LOAD_LEVEL_INFORMATION), for the NRF profile's nwdafInfo.eventIds.
+    static std::string toAnalyticsInfoEventId(const std::string& nwdaf_event);
 
     // IDs to advertise in the NRF profile (nwdafInfo). A function of code and
     // configuration only — never of transient data availability — so the

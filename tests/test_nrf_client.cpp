@@ -12,6 +12,7 @@
 #include "nwdaf_analytics.hpp"
 #include "nwdaf_subscription.hpp"
 #include <httplib.h>
+#include <algorithm>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -145,6 +146,23 @@ TEST_CASE("H1.9: the profile claims nothing that is not supported") {
     REQUIRE(p["nwdafInfo"] == json{{"nwdafEvents", {"NF_LOAD"}}, {"eventIds", {"NF_LOAD"}}});
     REQUIRE(p["nfServiceList"]["nnwdaf-analyticsinfo-1"]["supportedFeatures"] == "80");
     REQUIRE(p["nfServiceList"]["nnwdaf-eventssubscription-1"]["supportedFeatures"] == "40");
+}
+
+TEST_CASE("H1.9: nwdafInfo uses each enum's spelling and lists the served TAIs") {
+    // SLICE_LOAD_LEVEL is a NwdafEvent; its Nnwdaf_AnalyticsInfo EventId is
+    // LOAD_LEVEL_INFORMATION. taiList is backed by served_tai_list.
+    NwdafConfig cfg = nrfConfig();
+    cfg.oam_metrics_endpoints = {{"AMF", "http://127.0.0.5:9090/metrics"}};
+    cfg.slice_capacity = {NwdafSliceCapacity{1, "", 10, 0}};
+    cfg.served_tai_list = {{"999", "70", "000001"}};
+    const json p = NwdafNrfClient(cfg).profile();
+    requireOfficialProfile(p);
+    const json& info = p["nwdafInfo"];
+    const auto has = [](const json& a, const char* v) { return std::find(a.begin(), a.end(), v) != a.end(); };
+    REQUIRE(has(info["nwdafEvents"], "SLICE_LOAD_LEVEL"));
+    REQUIRE(has(info["eventIds"], "LOAD_LEVEL_INFORMATION"));
+    REQUIRE_FALSE(has(info["eventIds"], "SLICE_LOAD_LEVEL"));
+    REQUIRE(info["taiList"] == json::array({{{"plmnId", {{"mcc", "999"}, {"mnc", "70"}}}, {"tac", "000001"}}}));
 }
 
 TEST_CASE("H1.9: scheme and oauth2Required follow the configuration") {

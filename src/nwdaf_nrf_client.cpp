@@ -1,4 +1,5 @@
 #include "nwdaf_nrf_client.hpp"
+#include "nwdaf_3gpp_adapter.hpp"
 #include "nwdaf_analytics_catalogue.hpp"
 #include "nwdaf_supported_features.hpp"
 #include <spdlog/spdlog.h>
@@ -50,11 +51,18 @@ json NwdafNrfClient::profile() const {
     };
 
     // nwdafInfo only with what is actually supported: the advertised
-    // analytics. taiList, nwdafCapability, analyticsDelay, serving-NF lists
-    // and mlAnalyticsList are omitted — nothing backs them.
+    // analytics (nwdafEvents; eventIds in the Nnwdaf_AnalyticsInfo EventId
+    // spelling), and taiList when the served area is configured.
+    // nwdafCapability, analyticsDelay, serving-NF lists and mlAnalyticsList
+    // are omitted — nothing backs them.
     const auto advertised = NwdafAnalyticsCatalogue::rel18Advertised(config_);
-    if (!advertised.empty())
-        p["nwdafInfo"] = {{"nwdafEvents", advertised}, {"eventIds", advertised}};
+    if (!advertised.empty()) {
+        json event_ids = json::array();
+        for (const auto& id : advertised) event_ids.push_back(NwdafAnalyticsCatalogue::toAnalyticsInfoEventId(id));
+        p["nwdafInfo"] = {{"nwdafEvents", advertised}, {"eventIds", event_ids}};
+        if (!config_.served_tai_list.empty())
+            p["nwdafInfo"]["taiList"] = Nwdaf3gppAdapter::servedArea(config_)["tais"];
+    }
     return p;
 }
 

@@ -35,6 +35,10 @@ std::string NwdafAnalyticsCatalogue::fromAnalyticsInfoEventId(const std::string&
     return event_id == "LOAD_LEVEL_INFORMATION" ? "SLICE_LOAD_LEVEL" : event_id;
 }
 
+std::string NwdafAnalyticsCatalogue::toAnalyticsInfoEventId(const std::string& nwdaf_event) {
+    return nwdaf_event == "SLICE_LOAD_LEVEL" ? "LOAD_LEVEL_INFORMATION" : nwdaf_event;
+}
+
 std::string NwdafAnalyticsCatalogue::canonicalOperatorId(const std::string& id) {
     // COMP-05 / H1.4: pre-Rel-18 spellings kept working on the operator API.
     if (id == "QoS_SUSTAINABILITY")     return "QOS_SUSTAINABILITY";
