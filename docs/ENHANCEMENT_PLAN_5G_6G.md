@@ -31,7 +31,7 @@ This plan is organized into **three horizons** and is explicitly dual-lens: ever
 ## 1a. Execution status
 
 Tracked on the [5G/6G enhancement plan project board](https://github.com/users/cem8kaya/projects/5).
-Last updated **2026-08-23** (release `v1.1.0`).
+Last updated **2026-09-30** (branch `rel18-compliance`; last release `v1.1.0`).
 
 | Item | Issue | Status |
 |---|---|---|
