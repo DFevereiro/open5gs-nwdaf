@@ -136,8 +136,9 @@ public:
         Nwdaf3gppAdapter::SliceQuery& query);
 
     // H1.4: interpret the NETWORK_PERFORMANCE inputs (TS 29.520 V18.14.0
-    // §4.2.2.2.2, §4.3.2.2): target UE (anyUe only), networkArea (the whole
-    // served area, I-11), and the types — event-filter nwPerfTypes on
+    // §4.2.2.2.2, §4.3.2.2): target UE (anyUe only), networkArea (any TAs
+    // or cells for NUM_OF_UE from the AMF's UE list, else the whole served
+    // area, I-11), and the types — event-filter nwPerfTypes on
     // AnalyticsInfo, nwPerfRequs on a subscription. `filter` is the
     // event-filter or the EventSubscription (null when absent).
     static std::optional<Rejection> interpretNetworkPerformance(

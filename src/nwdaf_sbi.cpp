@@ -597,14 +597,27 @@ std::optional<NwdafSbiService::Rejection> NwdafSbiService::interpretNetworkPerfo
             query.types.push_back(type);
     }
 
-    // networkArea is mandatory with anyUe; the counts are per AMF, so they
-    // describe the whole served area only (I-11).
+    // networkArea is mandatory with anyUe. NUM_OF_UE from the AMF's UE list
+    // is computed for any area of TAs or cells; the metrics are per AMF or
+    // SMF, so they describe the whole served area only (I-11).
     if (!filter->contains("networkArea"))
         return Rejection{Rejection::MandatoryMissing, filter_at + "/networkArea",
                          "networkArea is mandatory for NETWORK_PERFORMANCE with anyUe"};
-    if (!Nwdaf3gppAdapter::coversServedArea((*filter)["networkArea"], config))
-        return Rejection{Rejection::Unsupported, filter_at + "/networkArea",
-                         "statistics are available only for the whole served area (every TAI in served_tai_list)"};
+    query.area = (*filter)["networkArea"];
+    for (const auto& type : query.types) {
+        if (Nwdaf3gppAdapter::nwPerfPerArea(type, config)) {
+            for (auto it = query.area.begin(); it != query.area.end(); ++it)
+                if (it.key() != "tais" && it.key() != "ncgis")
+                    return Rejection{Rejection::Unsupported, filter_at + "/networkArea/" + it.key(),
+                                     "the area can be given as tais or ncgis only (I-11)"};
+            if (!query.area.contains("tais") && !query.area.contains("ncgis"))
+                return Rejection{Rejection::Unsupported, filter_at + "/networkArea",
+                                 "the area must list tais or ncgis (I-11)"};
+        } else if (!Nwdaf3gppAdapter::coversServedArea(query.area, config)) {
+            return Rejection{Rejection::Unsupported, filter_at + "/networkArea",
+                             type + " is available only for the whole served area (every TAI in served_tai_list)"};
+        }
+    }
 
     // Feature-bound refinements this NWDAF doesn't support are ignored (I-2).
     for (const char* k : {"nwPerfReqs", "addNwPerfReqs", "spatialGranSizeTa", "spatialGranSizeCell",
@@ -635,7 +648,16 @@ std::optional<NwdafSbiService::Rejection> NwdafSbiService::nwPerfHistoryCovers(
     const auto has = [&](const char* t) {
         return std::find(query.types.begin(), query.types.end(), t) != query.types.end();
     };
-    return historyCovers(query.from, has("NUM_OF_UE"), has("SESS_SUCC_RATIO"), in, config, req_at,
+    // NUM_OF_UE from the UE list needs its history, the others the metrics'.
+    const bool per_area = has("NUM_OF_UE") && Nwdaf3gppAdapter::nwPerfPerArea("NUM_OF_UE", config);
+    if (per_area && query.from) {
+        const auto held = in.ue_locations ? in.ue_locations->heldSince(std::chrono::system_clock::now())
+                                          : std::nullopt;
+        if (!held || *held > *query.from + std::chrono::seconds(config.collection_interval_seconds))
+            return Rejection{Rejection::UnavailableData, req_at,
+                             "network performance statistics for that period are not held"};
+    }
+    return historyCovers(query.from, has("NUM_OF_UE") && !per_area, has("SESS_SUCC_RATIO"), in, config, req_at,
                          "network performance");
 }
 
@@ -652,7 +674,7 @@ SbiResponse NwdafSbiService::nwPerfInfo(std::map<std::string, json>& values,
     if (!rej) rej = nwPerfHistoryCovers(query, in, config_, "ana-req");
     if (rej) return queryRejection(*rej, local);
 
-    const json infos = Nwdaf3gppAdapter::nwPerfInfos(config_, query, in.amf_oam, in.smf_oam,
+    const json infos = Nwdaf3gppAdapter::nwPerfInfos(config_, query, in.amf_oam, in.smf_oam, in.ue_locations.get(),
                                                      std::chrono::system_clock::now());
     if (infos.empty()) return {204, "", "", {}};   // §4.3.2.2: no data for the period
     json data = timeStamps(config_);
@@ -953,7 +975,7 @@ std::vector<json> NwdafSbiService::thresholdReports(const json& es, const NwdafR
         const auto query = nwPerfQueryOf(es, config);
         if (!query) return out;
         json crossed_types = json::array();
-        for (const auto& info : Nwdaf3gppAdapter::nwPerfInfos(config, *query, in.amf_oam, in.smf_oam,
+        for (const auto& info : Nwdaf3gppAdapter::nwPerfInfos(config, *query, in.amf_oam, in.smf_oam, in.ue_locations.get(),
                                                               std::chrono::system_clock::now())) {
             const std::string type = info["nwPerfType"].get<std::string>();
             const char* key = info.contains("relativeRatio") ? "relativeRatio" : "absoluteNum";
@@ -1199,7 +1221,7 @@ std::vector<json> NwdafSbiService::eventReports(const json& es, const NwdafRepor
     } else if (event == "NETWORK_PERFORMANCE") {
         const auto query = nwPerfQueryOf(es, config);
         if (!query) return out;   // cannot happen for an accepted event
-        json infos = Nwdaf3gppAdapter::nwPerfInfos(config, *query, in.amf_oam, in.smf_oam,
+        json infos = Nwdaf3gppAdapter::nwPerfInfos(config, *query, in.amf_oam, in.smf_oam, in.ue_locations.get(),
                                                    std::chrono::system_clock::now());
         if (infos.empty()) return out;
         head["nwPerfs"] = infos;

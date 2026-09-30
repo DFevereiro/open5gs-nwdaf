@@ -104,10 +104,26 @@ std::vector<NwdafUeStay> NwdafUeLocationTracker::stays(const std::string& supi, 
     return out;
 }
 
+std::vector<NwdafUeStay> NwdafUeLocationTracker::allStays(Clock::time_point from, Clock::time_point to) const {
+    std::lock_guard<std::mutex> lk(m_);
+    std::vector<NwdafUeStay> out;
+    for (const auto& [supi, stays] : ues_)
+        for (const auto& s : stays) {
+            if (s.to <= s.from || s.to <= from || s.from >= to) continue;
+            out.push_back({s.loc, std::max(s.from, from), std::min(s.to, to)});
+        }
+    return out;
+}
+
 std::optional<NwdafUeLocationTracker::Clock::time_point> NwdafUeLocationTracker::heldSince(Clock::time_point now) const {
     std::lock_guard<std::mutex> lk(m_);
     if (!first_poll_) return std::nullopt;
     return std::max(*first_poll_, now - retention_);
+}
+
+std::optional<NwdafUeLocationTracker::Clock::time_point> NwdafUeLocationTracker::lastPoll() const {
+    std::lock_guard<std::mutex> lk(m_);
+    return last_poll_;
 }
 
 size_t NwdafUeLocationTracker::ueCount() const {

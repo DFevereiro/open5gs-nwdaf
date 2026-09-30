@@ -86,12 +86,17 @@ public:
     // H1.4: which network performance types and period a request covers.
     struct NwPerfQuery {
         std::vector<std::string> types;   // NetworkPerfType values, in request order
+        nlohmann::json area;              // the requested networkArea
         std::optional<std::chrono::system_clock::time_point> from, to;   // default: the last network_performance_window_seconds
     };
 
     // The types this NWDAF computes, given the configured sources (I-11):
-    // NUM_OF_UE needs the AMF metrics endpoint, SESS_SUCC_RATIO the SMF's.
+    // NUM_OF_UE from the AMF's UE list, or from the AMF metrics endpoint for
+    // the served area; SESS_SUCC_RATIO from the SMF's, for the served area.
     static bool nwPerfTypeAvailable(const std::string& type, const NwdafConfig& cfg);
+    // True when the type is computed for any area (tais / ncgis) rather than
+    // the whole served area only: NUM_OF_UE from the AMF's UE list.
+    static bool nwPerfPerArea(const std::string& type, const NwdafConfig& cfg);
 
     // TS 29.571 Tai as "<mcc>-<mnc>-<6 hex digit tac>".
     static std::string taiKey(const nlohmann::json& tai);
@@ -102,10 +107,20 @@ public:
     static bool coversServedArea(const nlohmann::json& network_area, const NwdafConfig& cfg);
 
     // NetworkPerfInfo per requested type that has data for the period (I-11).
+    // A per-area type reports the requested area; the others the served area.
+    // `ues` is the AMF UE list (null = none).
     static nlohmann::json nwPerfInfos(const NwdafConfig& cfg, const NwPerfQuery& query,
                                       const std::vector<NwdafOamScrape>& amf,
                                       const std::vector<NwdafOamScrape>& smf,
+                                      const NwdafUeLocationTracker* ues,
                                       std::chrono::system_clock::time_point now);
+    // The average number of UEs in the area over [from, to] from the UE
+    // list: UE-seconds in the area ÷ the period, which starts no earlier
+    // than the first poll (I-11). nullopt when the period isn't held.
+    static std::optional<double> ueCountInArea(const NwdafUeLocationTracker& ues, const nlohmann::json& area,
+                                               std::chrono::system_clock::time_point from,
+                                               std::chrono::system_clock::time_point to,
+                                               std::chrono::system_clock::time_point now);
 
     // H1.1: which UEs, area and period a UE_MOBILITY request covers (I-12).
     struct UeMobilityQuery {

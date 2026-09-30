@@ -63,7 +63,8 @@ TEST_CASE("QOL-03: each implemented ID is either advertised or withheld with a r
         }
     };
     check();
-    REQUIRE(Cat::rel18NotAdvertised(cfg).at("NETWORK_PERFORMANCE") == "served_tai_list is not configured");
+    REQUIRE(Cat::rel18NotAdvertised(cfg).at("NETWORK_PERFORMANCE") ==
+            "served_tai_list (or amf_ue_info_endpoint) is not configured");
     REQUIRE(Cat::rel18NotAdvertised(cfg).at("SLICE_LOAD_LEVEL") == "slice_capacity is not configured");
 
     cfg.served_tai_list.push_back({"999", "70", "000001"});

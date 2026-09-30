@@ -122,9 +122,32 @@ json Nwdaf3gppAdapter::nsiLoadLevelInfos(const std::vector<NwdafSliceLoad>& load
 // ── H1.4: NETWORK_PERFORMANCE (I-11) ────────────────────────────────────────
 
 bool Nwdaf3gppAdapter::nwPerfTypeAvailable(const std::string& type, const NwdafConfig& cfg) {
-    if (type == "NUM_OF_UE")       return cfg.oam_metrics_endpoints.count("AMF") > 0;
-    if (type == "SESS_SUCC_RATIO") return cfg.oam_metrics_endpoints.count("SMF") > 0;
+    const bool served = !cfg.served_tai_list.empty();
+    if (type == "NUM_OF_UE")
+        return nwPerfPerArea(type, cfg) || (served && cfg.oam_metrics_endpoints.count("AMF") > 0);
+    if (type == "SESS_SUCC_RATIO") return served && cfg.oam_metrics_endpoints.count("SMF") > 0;
     return false;
+}
+
+bool Nwdaf3gppAdapter::nwPerfPerArea(const std::string& type, const NwdafConfig& cfg) {
+    return type == "NUM_OF_UE" && !cfg.amf_ue_info_endpoint.empty();
+}
+
+std::optional<double> Nwdaf3gppAdapter::ueCountInArea(const NwdafUeLocationTracker& ues, const json& area,
+                                                      std::chrono::system_clock::time_point from,
+                                                      std::chrono::system_clock::time_point to,
+                                                      std::chrono::system_clock::time_point now) {
+    // Only the observed time counts: from the first poll to the last.
+    const auto held = ues.heldSince(now);
+    const auto last = ues.lastPoll();
+    if (!held || !last) return std::nullopt;
+    const auto start = std::max(from, *held);
+    const auto end = std::min(to, *last);
+    if (end <= start) return std::nullopt;
+    double ue_seconds = 0.0;
+    for (const auto& s : ues.allStays(start, end))
+        if (inArea(s.loc, area)) ue_seconds += std::chrono::duration<double>(s.to - s.from).count();
+    return ue_seconds / std::chrono::duration<double>(end - start).count();
 }
 
 std::string Nwdaf3gppAdapter::taiKey(const json& tai) {
@@ -156,13 +179,20 @@ bool Nwdaf3gppAdapter::coversServedArea(const json& network_area, const NwdafCon
 json Nwdaf3gppAdapter::nwPerfInfos(const NwdafConfig& cfg, const NwPerfQuery& query,
                                    const std::vector<NwdafOamScrape>& amf,
                                    const std::vector<NwdafOamScrape>& smf,
+                                   const NwdafUeLocationTracker* ues,
                                    std::chrono::system_clock::time_point now) {
     const auto from = query.from.value_or(now - std::chrono::seconds(cfg.network_performance_window_seconds));
     const auto to   = query.to.value_or(now);
     json out = json::array();
     for (const auto& type : query.types) {
         json info = {{"networkArea", servedArea(cfg)}, {"nwPerfType", type}};
-        if (type == "NUM_OF_UE") {
+        if (nwPerfPerArea(type, cfg)) {
+            // I-11: counted from the AMF's UE list, for the requested area.
+            const auto v = ues ? ueCountInArea(*ues, query.area, from, to, now) : std::nullopt;
+            if (!v) continue;
+            info["networkArea"] = query.area;
+            info["absoluteNum"] = std::lround(*v);
+        } else if (type == "NUM_OF_UE") {
             const auto v = NwdafNetworkPerformanceCalculator::numOfUe(
                 amf, NwdafSliceLoadCalculator::plmnLabel(cfg), from, to);
             if (!v) continue;
@@ -263,21 +293,24 @@ json Nwdaf3gppAdapter::ueMobilities(const NwdafConfig& cfg, const UeMobilityQuer
 
     // A group: the proportion of its UEs at each location, averaged over the
     // period; rounded down so the ratios never sum above 100 %. The period
-    // starts no earlier than the polls: before them, UEs that have since
-    // left are unknown.
+    // is the observed part: from the first poll (before it, UEs that have
+    // since left are unknown) to the last.
     auto start = from;
+    auto end = to;
     if (const auto held = tracker.heldSince(now)) start = std::max(start, *held);
-    if (to <= start) return out;
+    if (const auto last = tracker.lastPoll()) end = std::min(end, *last);
+    if (end <= start) return out;
     std::map<std::string, std::pair<NwdafUeLocation, double>> time_at;   // key → location, UE-seconds
     for (const auto& supi : query.supis)
         for (auto s : staysOf(supi)) {
-            if (s.to <= start) continue;
+            if (s.to <= start || s.from >= end) continue;
             s.from = std::max(s.from, start);
+            s.to = std::min(s.to, end);
             auto& e = time_at[locationKey(s.loc)];
             e.first = s.loc;
             e.second += std::chrono::duration<double>(s.to - s.from).count();
         }
-    const double period = std::chrono::duration<double>(to - start).count();
+    const double period = std::chrono::duration<double>(end - start).count();
     std::vector<std::pair<long, NwdafUeLocation>> ratios;
     for (const auto& [key, e] : time_at) {
         const long ratio = static_cast<long>(std::floor(100.0 * e.second / (period * query.supis.size())));
@@ -288,6 +321,6 @@ json Nwdaf3gppAdapter::ueMobilities(const NwdafConfig& cfg, const UeMobilityQuer
     if (query.max_objects && ratios.size() > *query.max_objects) ratios.resize(*query.max_objects);
     json locs = json::array();
     for (const auto& [ratio, loc] : ratios) locs.push_back({{"loc", userLocation(loc)}, {"ratio", ratio}});
-    out.push_back({{"ts", dateTime(start)}, {"duration", seconds(to - start)}, {"locInfos", locs}});
+    out.push_back({{"ts", dateTime(start)}, {"duration", seconds(end - start)}, {"locInfos", locs}});
     return out;
 }

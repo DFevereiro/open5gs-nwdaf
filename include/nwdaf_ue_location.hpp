@@ -62,10 +62,14 @@ public:
 
     // The UE's stays overlapping [from, to], clipped to it, oldest first.
     std::vector<NwdafUeStay> stays(const std::string& supi, Clock::time_point from, Clock::time_point to) const;
+    // Every UE's stays overlapping [from, to], clipped to it.
+    std::vector<NwdafUeStay> allStays(Clock::time_point from, Clock::time_point to) const;
 
     // Since when trajectories are complete: the first poll, or the start of
     // the retention window. nullopt before the first poll.
     std::optional<Clock::time_point> heldSince(Clock::time_point now) const;
+    // The last complete poll: trajectories are known up to it.
+    std::optional<Clock::time_point> lastPoll() const;
 
     // UEs in the last poll.
     size_t ueCount() const;

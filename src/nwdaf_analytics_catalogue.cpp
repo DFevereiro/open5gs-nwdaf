@@ -59,12 +59,13 @@ std::map<std::string, std::string> NwdafAnalyticsCatalogue::rel18NotAdvertised(c
         out["SLICE_LOAD_LEVEL"] = "slice_capacity is not configured";
         out["NSI_LOAD_LEVEL"]   = "slice_capacity is not configured";
     }
-    // I-11: the served area must be configured, and at least one type's source.
-    if (cfg.served_tai_list.empty())
-        out["NETWORK_PERFORMANCE"] = "served_tai_list is not configured";
-    else if (!Nwdaf3gppAdapter::nwPerfTypeAvailable("NUM_OF_UE", cfg) &&
-             !Nwdaf3gppAdapter::nwPerfTypeAvailable("SESS_SUCC_RATIO", cfg))
-        out["NETWORK_PERFORMANCE"] = "no AMF or SMF in oam_metrics_endpoints";
+    // I-11: at least one type needs its source: the AMF's UE list, or a
+    // metrics endpoint with the served area.
+    if (!Nwdaf3gppAdapter::nwPerfTypeAvailable("NUM_OF_UE", cfg) &&
+        !Nwdaf3gppAdapter::nwPerfTypeAvailable("SESS_SUCC_RATIO", cfg))
+        out["NETWORK_PERFORMANCE"] = cfg.served_tai_list.empty()
+            ? "served_tai_list (or amf_ue_info_endpoint) is not configured"
+            : "no AMF or SMF in oam_metrics_endpoints";
     // I-12: UE locations come from the AMF's per-UE list.
     if (cfg.amf_ue_info_endpoint.empty())
         out["UE_MOBILITY"] = "amf_ue_info_endpoint is not configured";

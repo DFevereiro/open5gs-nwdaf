@@ -19,6 +19,7 @@ using Calc = NwdafNetworkPerformanceCalculator;
 
 static const char* AMF_URL = "http://127.0.0.5:9090/metrics";
 static const char* SMF_URL = "http://127.0.0.4:9090/metrics";
+static const char* UE_INFO_URL = "http://127.0.0.5:9090/ue-info";
 
 static NwdafPromSample ues(const std::string& snssai, double v, const std::string& plmn = "99970") {
     return {"fivegs_amffunction_rm_registeredsubnbr", {{"plmnid", plmn}, {"snssai", snssai}}, v};
@@ -125,8 +126,10 @@ struct NpFixture {
     NwdafSubscriptionStore subs;
     NwdafSbiService        sbi;
 
-    explicit NpFixture(NwdafConfig c = npConfig())
+    // `ue_info`: the AMF's UE list (/ue-info page), when configured.
+    explicit NpFixture(NwdafConfig c = npConfig(), const std::string& ue_info = "")
         : cfg(std::move(c)), collector(cfg), engine(collector, cfg), sbi(engine, subs, cfg) {
+        if (!ue_info.empty()) collector.setOamMetrics(std::string(UE_INFO_URL) + "?page=0&page_size=100", ue_info);
         scrape(2, 10, 0);
         scrape(4, 20, 2);
     }
@@ -275,4 +278,71 @@ TEST_CASE("H1.4: NETWORK_PERFORMANCE thresholds report the crossed types (I-10, 
     REQUIRE(rs[0]["nwPerfs"][0]["nwPerfType"] == "NUM_OF_UE");
     REQUIRE(rs[0]["nwPerfs"][0]["absoluteNum"] == 5);
     REQUIRE(NwdafSbiService::thresholdReports(es, inputs(3), cfg, state).empty());   // descending: not matched
+}
+
+// ── NUM_OF_UE per area from the AMF's UE list ───────────────────────────────
+
+// An Open5GS /ue-info page: two UEs in TA 1 (cell 16), one in TA 2 (cell 32).
+static std::string ueInfoPage() {
+    const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
+        (Clock::now() - std::chrono::seconds(60)).time_since_epoch()).count();
+    json items = json::array();
+    const std::vector<std::pair<int, int>> ues = {{1, 16}, {1, 16}, {2, 32}};
+    for (size_t i = 0; i < ues.size(); ++i) {
+        char tac[8];
+        std::snprintf(tac, sizeof(tac), "%06x", ues[i].first);
+        items.push_back({{"supi", "imsi-99970000000000" + std::to_string(i + 1)},
+                         {"location", {{"timestamp", us},
+                                       {"nr_tai", {{"plmn", "99970"}, {"tac_hex", tac}}},
+                                       {"nr_cgi", {{"plmn", "99970"}, {"nci", ues[i].second}}}}}});
+    }
+    return json{{"items", items}, {"pager", {{"page", 0}, {"page_size", 100}, {"count", items.size()}}}}.dump();
+}
+
+static json taiArea(const char* tac) {
+    return {{"tais", {{{"plmnId", {{"mcc", "999"}, {"mnc", "70"}}}, {"tac", tac}}}}};
+}
+
+TEST_CASE("H1.4: with the AMF UE list, NUM_OF_UE is answered for any area of TAs or cells (I-11)") {
+    NwdafConfig cfg = npConfig();
+    cfg.amf_ue_info_endpoint = UE_INFO_URL;
+    NpFixture f(cfg, ueInfoPage());
+    const auto get = [&](json types, json area) {
+        return f.get({{"event-id", "NETWORK_PERFORMANCE"}, {"tgt-ue", ANY_UE}, {"event-filter", filter(types, area)}});
+    };
+
+    SbiResponse res = get({"NUM_OF_UE"}, taiArea("000002"));
+    INFO(res.body);
+    REQUIRE(res.status == 200);
+    json body = json::parse(res.body);
+    requireOfficialSchema(body, "TS29520_Nnwdaf_AnalyticsInfo.yaml#/components/schemas/AnalyticsData");
+    // The requested area is reported.
+    REQUIRE(body["nwPerfs"] == json::array({{{"networkArea", taiArea("000002")}, {"nwPerfType", "NUM_OF_UE"},
+                                             {"absoluteNum", 1}}}));
+    const json cell = {{"ncgis", {{{"plmnId", {{"mcc", "999"}, {"mnc", "70"}}}, {"nrCellId", "000000010"}}}}};
+    REQUIRE(json::parse(get({"NUM_OF_UE"}, cell).body)["nwPerfs"][0]["absoluteNum"] == 2);
+
+    // The served area: NUM_OF_UE counts UEs in the UE list (2 in TA 1, not the
+    // metrics' mean of 3); SESS_SUCC_RATIO still comes from the SMF.
+    body = json::parse(get({"NUM_OF_UE", "SESS_SUCC_RATIO"}, AREA).body);
+    REQUIRE(body["nwPerfs"][0]["absoluteNum"] == 2);
+    REQUIRE(body["nwPerfs"][1]["relativeRatio"] == 80);
+
+    // SESS_SUCC_RATIO has no per-area source; other area forms aren't reported.
+    REQUIRE(causeOf(get({"NUM_OF_UE", "SESS_SUCC_RATIO"}, taiArea("000002")), "OPTIONAL_QUERY_PARAM_INCORRECT") == 400);
+    const json ecgi = {{"ecgis", {{{"plmnId", {{"mcc", "999"}, {"mnc", "70"}}}, {"eutraCellId", "0000001"}}}}};
+    REQUIRE(causeOf(get({"NUM_OF_UE"}, ecgi), "OPTIONAL_QUERY_PARAM_INCORRECT") == 400);
+}
+
+TEST_CASE("H1.4: the AMF UE list alone advertises NETWORK_PERFORMANCE for NUM_OF_UE") {
+    NwdafConfig cfg = npConfig();
+    cfg.served_tai_list.clear();
+    cfg.oam_metrics_endpoints.clear();
+    cfg.amf_ue_info_endpoint = UE_INFO_URL;
+    REQUIRE(NwdafAnalyticsCatalogue::rel18Advertised(cfg).count("NETWORK_PERFORMANCE") == 1);
+    REQUIRE(Nwdaf3gppAdapter::nwPerfTypeAvailable("NUM_OF_UE", cfg));
+    REQUIRE_FALSE(Nwdaf3gppAdapter::nwPerfTypeAvailable("SESS_SUCC_RATIO", cfg));
+    // SESS_SUCC_RATIO needs the served area as well as the SMF endpoint.
+    cfg.oam_metrics_endpoints = {{"SMF", SMF_URL}};
+    REQUIRE_FALSE(Nwdaf3gppAdapter::nwPerfTypeAvailable("SESS_SUCC_RATIO", cfg));
 }
