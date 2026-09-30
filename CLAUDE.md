@@ -32,7 +32,7 @@ cd build && ctest -R "GET /health" --output-on-failure
 curl http://127.0.0.1:7779/nwdaf-analytics/v1/health
 ```
 
-**Newer toolchains fail on the pinned dependencies.** With GCC ≥ 16 or CMake ≥ 4, the pinned yaml-cpp 0.8.0 and spdlog (bundled fmt) fail under this project's flags: a missing `<cstdint>`, and `-Werror=dangling-reference`. CMake 4 also needs `-DCMAKE_POLICY_VERSION_MINIMUM=3.5`. Verify on the CI platform instead, for example `docker run --rm --user "$(id -u):$(id -g)" -v "$PWD":/src:ro,Z ubuntu:22.04 …` (as your user, so build output is not root-owned), following the steps in `ci.yml`.
+**Newer toolchains and the pinned dependencies.** `-Wall -Wextra -Werror` applies only to this project's targets (`nwdaf_warnings()`), and the fetched dependencies' headers are system headers (`nwdaf_system_includes()`, BUILD-01), so warnings in third-party code, such as GCC 13's `-Wdangling-reference` in spdlog's bundled fmt, don't fail the build. Real errors remain: yaml-cpp 0.8.0 misses a `<cstdint>` include under GCC ≥ 16, and CMake 4 needs `-DCMAKE_POLICY_VERSION_MINIMUM=3.5`. Verify on the CI platform instead, for example `docker run --rm --user "$(id -u):$(id -g)" -v "$PWD":/src:ro,Z ubuntu:22.04 …` (as your user, so build output is not root-owned), following the steps in `ci.yml`.
 
 The build uses `-Wall -Wextra -Werror`, so any warning fails the build. Fix warnings; don't suppress them. CI (`.github/workflows/ci.yml`) builds the full and minimal profiles on Ubuntu 22.04 and 20.04 (20.04 always has TLS off), then builds the Docker image. A change must compile under both the full and the minimal flag sets.
 

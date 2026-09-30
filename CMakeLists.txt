@@ -4,12 +4,45 @@ project(open5gs-nwdaf VERSION 1.1.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# P0-4: Hardening flags and warnings as errors
-add_compile_options(-Wall -Wextra -Werror -O2 -D_FORTIFY_SOURCE=2 -fstack-protector-strong)
+# P0-4: hardening flags for everything built here, including the fetched
+# dependencies.
+add_compile_options(-O2 -D_FORTIFY_SOURCE=2 -fstack-protector-strong)
 if(NOT APPLE)
     add_compile_options(-fPIE)
     add_link_options(-pie -Wl,-z,relro,-z,now)
 endif()
+
+# BUILD-01: warnings as errors for this project's own targets only. The
+# fetched dependencies are compiled without them, and their headers are system
+# headers (nwdaf_system_includes), so a newer compiler's warnings in
+# third-party code (e.g. GCC 13's -Wdangling-reference in spdlog's bundled
+# fmt) don't fail the build.
+set(NWDAF_WARNING_FLAGS -Wall -Wextra -Werror)
+function(nwdaf_warnings target)
+    target_compile_options(${target} PRIVATE ${NWDAF_WARNING_FLAGS})
+endfunction()
+
+# Present a fetched dependency's include directories as system headers.
+# Imported targets (from find_package) already are.
+function(nwdaf_system_includes)
+    foreach(t IN LISTS ARGN)
+        if(NOT TARGET ${t})
+            continue()
+        endif()
+        get_target_property(real ${t} ALIASED_TARGET)
+        if(real)
+            set(t ${real})
+        endif()
+        get_target_property(imported ${t} IMPORTED)
+        if(imported)
+            continue()
+        endif()
+        get_target_property(dirs ${t} INTERFACE_INCLUDE_DIRECTORIES)
+        if(dirs)
+            set_target_properties(${t} PROPERTIES INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${dirs}")
+        endif()
+    endforeach()
+endfunction()
 
 # Suppress FetchContent timestamp policy warning
 if(POLICY CMP0135)
@@ -37,6 +70,13 @@ endif()
 find_package(PkgConfig REQUIRED)
 
 include(FetchContent)
+
+# The fetched dependencies are build-time only: `cmake --install` installs the
+# NWDAF, not their headers or CMake packages.
+set(HTTPLIB_INSTALL OFF CACHE BOOL "" FORCE)
+set(YAML_CPP_INSTALL OFF CACHE BOOL "" FORCE)
+set(SPDLOG_INSTALL OFF CACHE BOOL "" FORCE)
+set(JSON_Install OFF CACHE BOOL "" FORCE)
 
 # cpp-httplib (header-only)
 FetchContent_Declare(httplib
@@ -70,6 +110,8 @@ if(NOT spdlog_FOUND)
     FetchContent_MakeAvailable(spdlog)
     message(STATUS "spdlog fetched via FetchContent")
 endif()
+
+nwdaf_system_includes(httplib::httplib nlohmann_json::nlohmann_json yaml-cpp spdlog::spdlog)
 
 # H1.7: official 3GPP Rel-18 OpenAPI artifacts (pinned + hash-verified)
 include(${CMAKE_SOURCE_DIR}/cmake/Nwdaf3gppOpenApi.cmake)
@@ -158,6 +200,7 @@ if(NWDAF_USE_TLS)
 endif()
 
 add_library(nwdaf_lib ${NWDAF_LIB_SOURCES})
+nwdaf_warnings(nwdaf_lib)
 
 target_include_directories(nwdaf_lib PUBLIC include)
 target_link_libraries(nwdaf_lib PUBLIC
@@ -195,6 +238,7 @@ endif()
 
 # ── Main executable ───────────────────────────────────────────────────────────
 add_executable(open5gs-nwdafd src/main.cpp)
+nwdaf_warnings(open5gs-nwdafd)
 target_link_libraries(open5gs-nwdafd PRIVATE nwdaf_lib)
 
 install(TARGETS open5gs-nwdafd DESTINATION /usr/local/bin)

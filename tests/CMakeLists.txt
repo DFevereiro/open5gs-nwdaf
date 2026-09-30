@@ -8,6 +8,7 @@ if(NOT Catch2_FOUND)
     list(APPEND CMAKE_MODULE_PATH "${catch2_SOURCE_DIR}/extras")
     message(STATUS "Catch2 fetched via FetchContent")
 endif()
+nwdaf_system_includes(Catch2 Catch2WithMain)   # BUILD-01
 
 add_library(nwdaf_mock
     mock_open5gs.cpp
@@ -17,6 +18,7 @@ target_include_directories(nwdaf_mock PUBLIC
     ${CMAKE_SOURCE_DIR}/include
 )
 target_link_libraries(nwdaf_mock PUBLIC nwdaf_lib)
+nwdaf_warnings(nwdaf_mock)
 
 # Unit + ARCH tests — no shared network resources, safe to run in parallel.
 add_executable(nwdaf_tests
@@ -33,6 +35,7 @@ add_executable(nwdaf_tests
     test_slice_load.cpp          # H1.2 SLICE_LOAD_LEVEL / NSI_LOAD_LEVEL (I-9)
     test_threshold_reporting.cpp # H1.7 THRESHOLD / ON_EVENT_DETECTION reporting (I-10)
 )
+nwdaf_warnings(nwdaf_tests)
 target_include_directories(nwdaf_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/include
@@ -57,6 +60,7 @@ add_executable(nwdaf_integration_tests
     test_3gpp_sbi.cpp              # H1.7 3GPP Nnwdaf_AnalyticsInfo / EventsSubscription
     test_nrf_client.cpp            # H1.9 NRF NFManagement client
 )
+nwdaf_warnings(nwdaf_integration_tests)
 target_include_directories(nwdaf_integration_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/include
