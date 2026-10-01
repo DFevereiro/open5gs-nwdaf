@@ -110,6 +110,9 @@ public:
 
     // PROD-04: hot-reloadable settings (safe to call from SIGHUP handler)
     void updateConfig(int collection_interval_seconds, double ewma_alpha);
+    // QOL-05: the OAM sources, reloaded on SIGHUP; read on the next tick.
+    void updateSources(const std::map<std::string, std::string>& oam_metrics_endpoints,
+                       const std::string& amf_ue_info_endpoint);
 
     std::vector<AmfEvent>         getRecentAmfEvents(int n = 100) const;
     std::vector<SmfEvent>         getRecentSmfEvents(int n = 100) const;

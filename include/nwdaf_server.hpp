@@ -31,7 +31,8 @@ public:
     NwdafServer(NwdafAnalyticsEngine& engine,
                 NwdafSubscriptionStore& subs,
                 const NwdafConfig& config,
-                std::shared_ptr<NwdafNfMonitor> nf_monitor = nullptr);   // H1.9
+                std::shared_ptr<NwdafNfMonitor> nf_monitor = nullptr,    // H1.9
+                std::shared_ptr<NwdafLiveConfig> live = nullptr);        // QOL-05: SIGHUP reload
 
     void start();
     void stop();
@@ -77,7 +78,8 @@ private:
 
     NwdafAnalyticsEngine&   engine_;
     NwdafSubscriptionStore& subs_;
-    NwdafConfig             config_;
+    NwdafConfig             config_;   // restart-only settings
+    std::shared_ptr<NwdafLiveConfig> live_;   // QOL-05: what reloads
 
     // H1.7: 3GPP Nnwdaf_AnalyticsInfo / Nnwdaf_EventsSubscription (TS 29.520)
     NwdafSbiService         sbi_;

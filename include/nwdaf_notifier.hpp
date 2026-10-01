@@ -30,7 +30,8 @@ public:
                   std::atomic<uint64_t>*  notif_total    = nullptr,
                   std::atomic<uint64_t>*  notif_failures = nullptr,
                   const NwdafConfig&      config         = NwdafConfig(),
-                  std::shared_ptr<NwdafNfMonitor> nf_monitor = nullptr);   // H1.9
+                  std::shared_ptr<NwdafNfMonitor> nf_monitor = nullptr,    // H1.9
+                  std::shared_ptr<NwdafLiveConfig> live = nullptr);        // QOL-05: SIGHUP reload
 
     void start();
     void stop();
@@ -45,7 +46,8 @@ private:
     // stored representation.
     void deliverRel18(const Subscription& sub, const NwdafReportInputs& in);
 
-    NwdafConfig             config_;
+    NwdafConfig             config_;   // restart-only settings (TLS for delivery)
+    std::shared_ptr<NwdafLiveConfig> live_;   // QOL-05: the analytics settings
     std::shared_ptr<NwdafNfMonitor> nf_monitor_;
 
     NwdafSubscriptionStore& subs_;

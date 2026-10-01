@@ -108,7 +108,9 @@ MOVEMENT_BEHAVIOUR, LOC_ACCURACY, RELATIVE_PROXIMITY.
 hold: its Rel-18 output is implemented, and the mandatory inputs are backed by
 capability that is implemented **and configured** in the deployment. Advertisement
 does not follow transient data availability. A temporary data-source or NRF
-failure produces the operation-specific analytics failure (§5) instead. **Currently advertised through the 3GPP
+failure produces the operation-specific analytics failure (§5) instead. The capability settings reload on
+SIGHUP; when the NF profile changes, the NWDAF sends NFUpdate at once and logs
+the advertisement before and after. **Currently advertised through the 3GPP
 interfaces: NF_LOAD, when `nf_instance_ids` is configured or `nrf_nf_discovery` is on;
 SLICE_LOAD_LEVEL and NSI_LOAD_LEVEL, when `slice_capacity` is configured; NETWORK_PERFORMANCE, when `amf_ue_info_endpoint` is configured, or `served_tai_list` and an AMF or SMF metrics endpoint; UE_MOBILITY, when `amf_ue_info_endpoint` is configured.**
 
@@ -201,7 +203,7 @@ or a recorded manual check as evidence.
 |---|---|---|
 | Conformant AnalyticsInfo and EventsSubscription APIs | `tests/test_3gpp_sbi.cpp`, run over HTTP/2 in the Ubuntu 22.04 CI job | **Met** for the supported scope |
 | Every advertised analytics ID produces output that validates against the official schemas | `tests/test_3gpp_sbi.cpp`: NF_LOAD `AnalyticsData`, `NnwdafEventsSubscription` and `NnwdafEventsSubscriptionNotification` are validated against the pinned official schemas | **Met**: NF_LOAD is the only advertised ID |
-| Unsupported IDs aren't advertised; advertised ⊆ implemented ⊆ known; advertisement doesn't flap on transient failures; a real capability change is reflected in the NRF profile | `test_analytics_catalogue`, `test_nrf_client` | **Met** (capability changes are restart-only, and the restart re-registers with NFRegister) |
+| Unsupported IDs aren't advertised; advertised ⊆ implemented ⊆ known; advertisement doesn't flap on transient failures; a real capability change is reflected in the NRF profile | `test_analytics_catalogue`, `test_nrf_client` | **Met**: a capability change reloaded on SIGHUP sends NFUpdate, a complete replacement of the profile (TS 29.510 V18.11.0 §5.2.2.3.1A; `test_nrf_client` "QOL-05: a reload that changes the NF profile sends NFUpdate with the new advertisement"); a restart re-registers with NFRegister |
 | Requests are validated against the official schema first. A schema-valid request we don't support gets the operation-specific failure semantics. | `tests/test_3gpp_sbi.cpp`, `tests/test_schema_validator.cpp` | **Met** |
 | HTTP/2 conformance, over both h2c and TLS h2 | `tests/test_3gpp_sbi.cpp` over HTTP/2 in the Ubuntu 22.04 full CI job (`NWDAF_REQUIRE_REL18_PROFILE`); `tests/test_sbi_security.cpp` h2/TLS tests | **Met** |
 | Correct NRF registration, a truthful profile, and the full lifecycle | `test_nrf_client` (a mock NRF over HTTP/2); Open5GS interop records | **Met**: register, heartbeat, `404` re-registration, deregister, and NF instance resolution. (Resolution moved from NFDiscover to NFListRetrieval on 2026-09-29, when NFDiscover turned out to hide every real Open5GS NF from an NWDAF requester; see the interoperability records.) |

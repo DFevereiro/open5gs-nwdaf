@@ -5,20 +5,22 @@
 using json = nlohmann::json;
 
 NwdafNfMonitor::NwdafNfMonitor(const NwdafConfig& config)
-    : config_(config), http_(config) {}
+    : config_(config), http_(config), configured_(config.nf_instance_ids) {}
 
 std::chrono::system_clock::time_point NwdafNfMonitor::now() const {
     return std::chrono::system_clock::now();
 }
 
 std::map<std::string, std::string> NwdafNfMonitor::ids() const {
-    std::map<std::string, std::string> out;
-    {
-        std::lock_guard<std::mutex> lk(mutex_);
-        out = resolved_;
-    }
-    for (const auto& [type, id] : config_.nf_instance_ids) out[type] = id;   // configured wins
+    std::lock_guard<std::mutex> lk(mutex_);
+    std::map<std::string, std::string> out = resolved_;
+    for (const auto& [type, id] : configured_) out[type] = id;   // configured wins
     return out;
+}
+
+void NwdafNfMonitor::setConfiguredIds(const std::map<std::string, std::string>& ids) {
+    std::lock_guard<std::mutex> lk(mutex_);
+    configured_ = ids;
 }
 
 void NwdafNfMonitor::refresh() {
@@ -68,7 +70,7 @@ void NwdafNfMonitor::refresh() {
         const auto start = poll.at - std::chrono::seconds(config_.nrf_nf_status_window_seconds);
         while (!polls.empty() && polls.front().at < start) polls.pop_front();
 
-        if (config_.nf_instance_ids.count(type)) continue;
+        if (configured_.count(type)) continue;
         if (listed.size() == 1) {
             if (resolved_[type] != listed.front())
                 spdlog::info("NRF: {} is {}", type, listed.front());

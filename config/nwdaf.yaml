@@ -1,3 +1,7 @@
+# Open5GS NWDAF configuration. `systemctl reload open5gs-nwdafd` (SIGHUP)
+# applies the logging, cadence, data-source, capability (slice_capacity,
+# served_tai_list, nf_instance_ids), window and prediction settings; the rest
+# needs a restart (README, Configuration).
 nwdaf:
   # NF identity
   nf_instance_id: "198e9234-b849-42a2-9f70-d9a587616c2b"  # stable — do not regenerate

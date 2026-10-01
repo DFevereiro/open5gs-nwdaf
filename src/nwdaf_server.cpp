@@ -14,9 +14,11 @@
 NwdafServer::NwdafServer(NwdafAnalyticsEngine& engine,
                          NwdafSubscriptionStore& subs,
                          const NwdafConfig& config,
-                         std::shared_ptr<NwdafNfMonitor> nf_monitor)
+                         std::shared_ptr<NwdafNfMonitor> nf_monitor,
+                         std::shared_ptr<NwdafLiveConfig> live)
     : engine_(engine), subs_(subs), config_(config),
-      sbi_(engine, subs, config, std::move(nf_monitor)),
+      live_(live ? std::move(live) : std::make_shared<NwdafLiveConfig>(config)),
+      sbi_(engine, subs, config, std::move(nf_monitor), live_),
 #ifdef NWDAF_USE_TLS
       oauth_schema_(config.openapi_3gpp_dir),
 #endif
@@ -406,8 +408,8 @@ void NwdafServer::handleHealth(const httplib::Request& req, httplib::Response& r
         // QOL-03: what the 3GPP interfaces advertise, and why the other
         // implemented analytics aren't (the configuration they lack).
         {"rel18Analytics", {
-            {"advertised",    NwdafAnalyticsCatalogue::rel18Advertised(config_)},
-            {"notAdvertised", NwdafAnalyticsCatalogue::rel18NotAdvertised(config_)}
+            {"advertised",    NwdafAnalyticsCatalogue::rel18Advertised(*live_->get())},
+            {"notAdvertised", NwdafAnalyticsCatalogue::rel18NotAdvertised(*live_->get())}
         }},
         {"nfProfile", {
             {"nfType",       "NWDAF"},

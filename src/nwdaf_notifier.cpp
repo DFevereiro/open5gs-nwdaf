@@ -36,8 +36,10 @@ NwdafNotifier::NwdafNotifier(NwdafSubscriptionStore& subs,
                               std::atomic<uint64_t>*  notif_total,
                               std::atomic<uint64_t>*  notif_failures,
                               const NwdafConfig&      config,
-                              std::shared_ptr<NwdafNfMonitor> nf_monitor)
+                              std::shared_ptr<NwdafNfMonitor> nf_monitor,
+                              std::shared_ptr<NwdafLiveConfig> live)
     : config_(config),
+      live_(live ? std::move(live) : std::make_shared<NwdafLiveConfig>(config)),
       nf_monitor_(nf_monitor ? std::move(nf_monitor) : std::make_shared<NwdafNfMonitor>(config)),
       subs_(subs), engine_(engine), poll_interval_s_(poll_interval_seconds),
       notif_total_(notif_total), notif_failures_(notif_failures)
@@ -164,6 +166,7 @@ void NwdafNotifier::deliver(const Subscription& sub) {
 }
 
 void NwdafNotifier::deliverRel18(const Subscription& sub, const NwdafReportInputs& in) {
+    const auto cfg = live_->get();   // QOL-05: one configuration per delivery
     json rep;
     try { rep = json::parse(sub.rel18_json); }
     catch (const json::parse_error&) {
@@ -203,7 +206,7 @@ void NwdafNotifier::deliverRel18(const Subscription& sub, const NwdafReportInput
                 std::lock_guard<std::mutex> lk(ts_mutex_);
                 next = threshold_state_[tkey];
             }
-            auto rs = NwdafSbiService::thresholdReports(es, in, config_, next);
+            auto rs = NwdafSbiService::thresholdReports(es, in, *cfg, next);
             if (rs.empty()) {
                 std::lock_guard<std::mutex> lk(ts_mutex_);
                 threshold_state_[tkey] = std::move(next);   // new baselines, nothing to report
@@ -225,7 +228,7 @@ void NwdafNotifier::deliverRel18(const Subscription& sub, const NwdafReportInput
         }
         // No data now → nothing to report for this event (failNotifyCode
         // UNAVAILABLE_DATA needs StatisticsFailure, which is not supported).
-        auto rs = NwdafSbiService::eventReports(es, in, config_);
+        auto rs = NwdafSbiService::eventReports(es, in, *cfg);
         if (!rs.empty()) {
             for (auto& r : rs) reports.push_back(std::move(r));
             due_keys.push_back(key);

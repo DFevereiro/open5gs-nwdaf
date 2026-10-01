@@ -252,8 +252,10 @@ std::vector<json> sliceNotifications(const std::vector<NwdafSliceLoad>& loads, c
 NwdafSbiService::NwdafSbiService(NwdafAnalyticsEngine& engine,
                                  NwdafSubscriptionStore& subs,
                                  const NwdafConfig& config,
-                                 std::shared_ptr<NwdafNfMonitor> nf_monitor)
-    : engine_(engine), subs_(subs), config_(config),
+                                 std::shared_ptr<NwdafNfMonitor> nf_monitor,
+                                 std::shared_ptr<NwdafLiveConfig> live)
+    : engine_(engine), subs_(subs),
+      live_(live ? std::move(live) : std::make_shared<NwdafLiveConfig>(config)),
       validator_(config.openapi_3gpp_dir),
       nf_monitor_(nf_monitor ? std::move(nf_monitor) : std::make_shared<NwdafNfMonitor>(config))
 {
@@ -283,18 +285,22 @@ SbiResponse NwdafSbiService::dispatch(const SbiRequest& req) {
         return problem(500, "SYSTEM_FAILURE",
                        "the official 3GPP OpenAPI artifacts are not installed on this instance");
 
+    // QOL-05: one configuration for the whole request, even across a reload.
+    const auto snapshot = live_->get();
+    const NwdafConfig& config = *snapshot;
+
     if (req.path == analytics) {
         // The 3GPP resource supports GET only. The deprecated, non-standard
         // JSON-body POST exists on the operator (HTTP/1.1) port alone.
-        if (req.method == "GET") return getAnalytics(req);
+        if (req.method == "GET") return getAnalytics(req, config);
         return methodNotAllowed("GET");
     }
     if (req.path == subs) {
-        if (req.method == "POST") return createSubscription(req);
+        if (req.method == "POST") return createSubscription(req, config);
         return methodNotAllowed("POST");
     }
     const std::string id = req.path.substr(subs.size() + 1);
-    if (req.method == "PUT")    return modifySubscription(req, id);
+    if (req.method == "PUT")    return modifySubscription(req, id, config);
     if (req.method == "DELETE") return deleteSubscription(id);
     return methodNotAllowed("PUT, DELETE");
 }
@@ -337,8 +343,8 @@ NwdafSbiService::parseDateTime(const std::string& s) {
 
 // ── Nnwdaf_AnalyticsInfo: GET /analytics ────────────────────────────────────
 
-SbiResponse NwdafSbiService::getAnalytics(const SbiRequest& req) {
-    const NwdafFeatureSet local = NwdafSupportedFeatures::local(NnwdafApi::AnalyticsInfo, config_);
+SbiResponse NwdafSbiService::getAnalytics(const SbiRequest& req, const NwdafConfig& config) {
+    const NwdafFeatureSet local = NwdafSupportedFeatures::local(NnwdafApi::AnalyticsInfo, config);
 
     // Query parameters of the operation (TS29520_Nnwdaf_AnalyticsInfo.yaml).
     // Structured ones are JSON-encoded (content: application/json).
@@ -401,7 +407,7 @@ SbiResponse NwdafSbiService::getAnalytics(const SbiRequest& req) {
     const std::string nwdaf_event = NwdafAnalyticsCatalogue::fromAnalyticsInfoEventId(event);
     if (req.authorized_analytics && !req.authorized_analytics->count(nwdaf_event))
         return analyticsNotAuthorized(req, ANALYTICS_INFO_ROOT, "nnwdaf-analyticsinfo");
-    if (!NwdafAnalyticsCatalogue::rel18Advertised(config_).count(nwdaf_event))
+    if (!NwdafAnalyticsCatalogue::rel18Advertised(config).count(nwdaf_event))
         return problem(400, "MANDATORY_QUERY_PARAM_INCORRECT",
                        "analytics " + event + " is not supported by this NWDAF",
                        json::array({invalidParam("event-id", "analytics not supported by this NWDAF")}),
@@ -411,11 +417,11 @@ SbiResponse NwdafSbiService::getAnalytics(const SbiRequest& req) {
     if (values.count("supported-features"))
         consumer = NwdafFeatureSet::parse(values["supported-features"].get<std::string>());
 
-    if (event == "NF_LOAD") return nfLoadInfo(values, consumer, local);
+    if (event == "NF_LOAD") return nfLoadInfo(config, values, consumer, local);
     if (nwdaf_event == "SLICE_LOAD_LEVEL" || nwdaf_event == "NSI_LOAD_LEVEL")
-        return sliceLoadInfo(nwdaf_event, values, consumer, local);
-    if (event == "NETWORK_PERFORMANCE") return nwPerfInfo(values, consumer, local);
-    if (event == "UE_MOBILITY") return ueMobilityInfo(values, consumer, local);
+        return sliceLoadInfo(config, nwdaf_event, values, consumer, local);
+    if (event == "NETWORK_PERFORMANCE") return nwPerfInfo(config, values, consumer, local);
+    if (event == "UE_MOBILITY") return ueMobilityInfo(config, values, consumer, local);
 
     // An advertised ID always has a mapping; reaching here is a defect.
     spdlog::error("AnalyticsInfo: {} is advertised but has no Rel-18 mapping", event);
@@ -504,7 +510,7 @@ std::optional<NwdafSbiService::Rejection> NwdafSbiService::interpretNfLoad(
     return std::nullopt;
 }
 
-SbiResponse NwdafSbiService::nfLoadInfo(std::map<std::string, json>& values,
+SbiResponse NwdafSbiService::nfLoadInfo(const NwdafConfig& config, std::map<std::string, json>& values,
                                         const std::optional<NwdafFeatureSet>& consumer,
                                         const NwdafFeatureSet& local) {
     Nwdaf3gppAdapter::NfLoadQuery query;
@@ -513,11 +519,11 @@ SbiResponse NwdafSbiService::nfLoadInfo(std::map<std::string, json>& values,
                                values.count("event-filter") ? values["event-filter"] : no_filter,
                                "event-filter",
                                values.count("ana-req") ? &values["ana-req"] : nullptr, "ana-req",
-                               config_, query);
+                               config, query);
     if (rej) return queryRejection(*rej, local);
 
     const json infos = query.prediction
-        ? Nwdaf3gppAdapter::nfLoadPredictions(config_, engine_.getNfLoadHistory(), nf_monitor_->ids(), query,
+        ? Nwdaf3gppAdapter::nfLoadPredictions(config, engine_.getNfLoadHistory(), nf_monitor_->ids(), query,
                                               std::chrono::system_clock::now())
         : Nwdaf3gppAdapter::nfLoadLevelInfos(engine_.getCurrentNfMetrics(), nf_monitor_->ids(),
                                              nf_monitor_->statuses(), query);
@@ -525,7 +531,7 @@ SbiResponse NwdafSbiService::nfLoadInfo(std::map<std::string, json>& values,
     // NWDAF shall respond with 204 No Content".
     if (infos.empty()) return {204, "", "", {}};
 
-    json data = timeStamps(config_);
+    json data = timeStamps(config);
     if (query.prediction) predictionStamps(data, *query.from, *query.to);
     data["nfLoadLevelInfos"] = infos;
     if (consumer) data["suppFeat"] = local.intersect(*consumer).toHex();
@@ -696,7 +702,7 @@ std::optional<NwdafSbiService::Rejection> NwdafSbiService::nwPerfHistoryCovers(
                          "network performance");
 }
 
-SbiResponse NwdafSbiService::nwPerfInfo(std::map<std::string, json>& values,
+SbiResponse NwdafSbiService::nwPerfInfo(const NwdafConfig& config, std::map<std::string, json>& values,
                                         const std::optional<NwdafFeatureSet>& consumer,
                                         const NwdafFeatureSet& local) {
     Nwdaf3gppAdapter::NwPerfQuery query;
@@ -705,14 +711,14 @@ SbiResponse NwdafSbiService::nwPerfInfo(std::map<std::string, json>& values,
                                            values.count("event-filter") ? &values["event-filter"] : nullptr,
                                            "event-filter",
                                            values.count("ana-req") ? &values["ana-req"] : nullptr, "ana-req",
-                                           false, config_, query);
-    if (!rej) rej = nwPerfHistoryCovers(query, in, config_, "ana-req");
+                                           false, config, query);
+    if (!rej) rej = nwPerfHistoryCovers(query, in, config, "ana-req");
     if (rej) return queryRejection(*rej, local);
 
-    const json infos = Nwdaf3gppAdapter::nwPerfInfos(config_, query, in.amf_oam, in.smf_oam, in.ue_locations.get(),
+    const json infos = Nwdaf3gppAdapter::nwPerfInfos(config, query, in.amf_oam, in.smf_oam, in.ue_locations.get(),
                                                      std::chrono::system_clock::now());
     if (infos.empty()) return {204, "", "", {}};   // §4.3.2.2: no data for the period
-    json data = timeStamps(config_);
+    json data = timeStamps(config);
     data["nwPerfs"] = infos;
     if (consumer) data["suppFeat"] = local.intersect(*consumer).toHex();
     return {200, "application/json", data.dump(), {}};
@@ -800,7 +806,7 @@ std::optional<NwdafSbiService::Rejection> NwdafSbiService::ueMobilityHistoryCove
     return std::nullopt;
 }
 
-SbiResponse NwdafSbiService::ueMobilityInfo(std::map<std::string, json>& values,
+SbiResponse NwdafSbiService::ueMobilityInfo(const NwdafConfig& config, std::map<std::string, json>& values,
                                             const std::optional<NwdafFeatureSet>& consumer,
                                             const NwdafFeatureSet& local) {
     Nwdaf3gppAdapter::UeMobilityQuery query;
@@ -809,14 +815,14 @@ SbiResponse NwdafSbiService::ueMobilityInfo(std::map<std::string, json>& values,
                                    values.count("event-filter") ? &values["event-filter"] : nullptr,
                                    "event-filter",
                                    values.count("ana-req") ? &values["ana-req"] : nullptr, "ana-req", query);
-    if (!rej) rej = ueMobilityHistoryCovers(query, in, config_, "ana-req");
+    if (!rej) rej = ueMobilityHistoryCovers(query, in, config, "ana-req");
     if (rej) return queryRejection(*rej, local);
 
     const json mobs = in.ue_locations
-        ? Nwdaf3gppAdapter::ueMobilities(config_, query, *in.ue_locations, std::chrono::system_clock::now())
+        ? Nwdaf3gppAdapter::ueMobilities(config, query, *in.ue_locations, std::chrono::system_clock::now())
         : json::array();
     if (mobs.empty()) return {204, "", "", {}};   // §4.3.2.2: no data for the UE(s) and period
-    json data = timeStamps(config_);
+    json data = timeStamps(config);
     data["ueMobs"] = mobs;
     if (consumer) data["suppFeat"] = local.intersect(*consumer).toHex();
     return {200, "application/json", data.dump(), {}};
@@ -837,7 +843,7 @@ NwdafReportInputs NwdafSbiService::gatherInputs(const NwdafAnalyticsEngine& engi
 
 NwdafReportInputs NwdafSbiService::inputs() const { return gatherInputs(engine_, *nf_monitor_); }
 
-SbiResponse NwdafSbiService::sliceLoadInfo(const std::string& event,
+SbiResponse NwdafSbiService::sliceLoadInfo(const NwdafConfig& config, const std::string& event,
                                            std::map<std::string, json>& values,
                                            const std::optional<NwdafFeatureSet>& consumer,
                                            const NwdafFeatureSet& local) {
@@ -846,28 +852,28 @@ SbiResponse NwdafSbiService::sliceLoadInfo(const std::string& event,
     auto rej = interpretSliceLoad(event, values.count("event-filter") ? &values["event-filter"] : nullptr,
                                   "event-filter",
                                   values.count("ana-req") ? &values["ana-req"] : nullptr, "ana-req",
-                                  config_, query);
-    if (!rej && !query.prediction) rej = sliceHistoryCovers(query, in, config_, "ana-req");
+                                  config, query);
+    if (!rej && !query.prediction) rej = sliceHistoryCovers(query, in, config, "ana-req");
     if (rej) return queryRejection(*rej, local);
 
     if (query.prediction) {   // NSI_LOAD_LEVEL only (I-13)
-        const json infos = Nwdaf3gppAdapter::nsiLoadPredictions(config_, query, in.amf_oam, in.smf_oam,
+        const json infos = Nwdaf3gppAdapter::nsiLoadPredictions(config, query, in.amf_oam, in.smf_oam,
                                                                 std::chrono::system_clock::now());
         if (infos.empty()) return {204, "", "", {}};
-        json data = timeStamps(config_);
+        json data = timeStamps(config);
         predictionStamps(data, *query.from, *query.to);
         data["nsiLoadLevelInfos"] = infos;
         if (consumer) data["suppFeat"] = local.intersect(*consumer).toHex();
         return {200, "application/json", data.dump(), {}};
     }
 
-    const auto loads = Nwdaf3gppAdapter::sliceLoads(config_, query, in.amf_oam, in.smf_oam,
+    const auto loads = Nwdaf3gppAdapter::sliceLoads(config, query, in.amf_oam, in.smf_oam,
                                                     std::chrono::system_clock::now());
     // §4.3.2.2: no analytics data for the request → 204 No Content. That
     // includes slices with no configured capacity (no load level, I-9).
     if (loads.empty()) return {204, "", "", {}};
 
-    json data = timeStamps(config_);
+    json data = timeStamps(config);
     if (event == "SLICE_LOAD_LEVEL") data["sliceLoadLevelInfos"] = Nwdaf3gppAdapter::sliceLoadLevelInfos(loads);
     else                             data["nsiLoadLevelInfos"]   = Nwdaf3gppAdapter::nsiLoadLevelInfos(loads);
     if (consumer) data["suppFeat"] = local.intersect(*consumer).toHex();
@@ -1069,9 +1075,9 @@ std::vector<json> NwdafSbiService::thresholdReports(const json& es, const NwdafR
 // ── Nnwdaf_EventsSubscription ───────────────────────────────────────────────
 
 std::optional<SbiResponse>
-NwdafSbiService::evaluateSubscription(const SbiRequest& req, SubscriptionOutcome& out) {
+NwdafSbiService::evaluateSubscription(const SbiRequest& req, SubscriptionOutcome& out, const NwdafConfig& config) {
     const NwdafFeatureSet local =
-        NwdafSupportedFeatures::local(NnwdafApi::EventsSubscription, config_);
+        NwdafSupportedFeatures::local(NnwdafApi::EventsSubscription, config);
 
     auto ct = req.headers.find("content-type");
     if (ct == req.headers.end() || ct->second.rfind("application/json", 0) != 0)
@@ -1138,7 +1144,7 @@ NwdafSbiService::evaluateSubscription(const SbiRequest& req, SubscriptionOutcome
     out.negotiated = local.intersect(consumer);
 
     // 5. Per event.
-    const auto advertised = NwdafAnalyticsCatalogue::rel18Advertised(config_);
+    const auto advertised = NwdafAnalyticsCatalogue::rel18Advertised(config);
     std::optional<NwdafReportInputs> in;   // fetched only when a slice period needs checking
     const auto& subs = body["eventSubscriptions"];
     for (size_t i = 0; i < subs.size(); ++i) {
@@ -1179,17 +1185,17 @@ NwdafSbiService::evaluateSubscription(const SbiRequest& req, SubscriptionOutcome
         if (event == "NF_LOAD") {
             Nwdaf3gppAdapter::NfLoadQuery query;
             rej = interpretNfLoad(member(es, "tgtUe"), at + "/tgtUe", es, at,
-                                  member(es, "extraReportReq"), req_at, config_, query);
+                                  member(es, "extraReportReq"), req_at, config, query);
             if (!rej && query.prediction && thresholdMode(evt_req, es))
                 rej = Rejection{Rejection::Unsupported, req_at, "THRESHOLD reporting on predictions is not supported (I-13)"};
         } else if (event == "SLICE_LOAD_LEVEL" || event == "NSI_LOAD_LEVEL") {
             Nwdaf3gppAdapter::SliceQuery query;
-            rej = interpretSliceLoad(event, &es, at, member(es, "extraReportReq"), req_at, config_, query);
+            rej = interpretSliceLoad(event, &es, at, member(es, "extraReportReq"), req_at, config, query);
             if (!rej && query.prediction && thresholdMode(evt_req, es))
                 rej = Rejection{Rejection::Unsupported, req_at, "THRESHOLD reporting on predictions is not supported (I-13)"};
             if (!rej && query.from && !query.prediction) {
                 if (!in) in = inputs();
-                rej = sliceHistoryCovers(query, *in, config_, req_at);
+                rej = sliceHistoryCovers(query, *in, config, req_at);
             }
         } else if (event == "UE_MOBILITY") {
             Nwdaf3gppAdapter::UeMobilityQuery query;
@@ -1197,15 +1203,15 @@ NwdafSbiService::evaluateSubscription(const SbiRequest& req, SubscriptionOutcome
                                       member(es, "extraReportReq"), req_at, query);
             if (!rej && query.from) {
                 if (!in) in = inputs();
-                rej = ueMobilityHistoryCovers(query, *in, config_, req_at);
+                rej = ueMobilityHistoryCovers(query, *in, config, req_at);
             }
         } else if (event == "NETWORK_PERFORMANCE") {
             Nwdaf3gppAdapter::NwPerfQuery query;
             rej = interpretNetworkPerformance(member(es, "tgtUe"), at + "/tgtUe", &es, at,
-                                              member(es, "extraReportReq"), req_at, true, config_, query);
+                                              member(es, "extraReportReq"), req_at, true, config, query);
             if (!rej && query.from) {
                 if (!in) in = inputs();
-                rej = nwPerfHistoryCovers(query, *in, config_, req_at);
+                rej = nwPerfHistoryCovers(query, *in, config, req_at);
             }
         }
         if (rej) {
@@ -1304,9 +1310,9 @@ std::vector<json> NwdafSbiService::eventReports(const json& es, const NwdafRepor
     return out;
 }
 
-SbiResponse NwdafSbiService::createSubscription(const SbiRequest& req) {
+SbiResponse NwdafSbiService::createSubscription(const SbiRequest& req, const NwdafConfig& config) {
     SubscriptionOutcome out;
-    if (auto err = evaluateSubscription(req, out)) return *err;
+    if (auto err = evaluateSubscription(req, out, config)) return *err;
 
     json rep = representation(out.request, out.accepted, out.failed, out.negotiated);
     const std::string id = subs_.createRel18(rep);
@@ -1319,7 +1325,7 @@ SbiResponse NwdafSbiService::createSubscription(const SbiRequest& req) {
         json reports = json::array();
         const NwdafReportInputs in = inputs();
         for (const auto& es : rep["eventSubscriptions"])
-            for (auto& r : eventReports(es, in, config_)) reports.push_back(std::move(r));
+            for (auto& r : eventReports(es, in, config)) reports.push_back(std::move(r));
         if (!reports.empty()) body["eventNotifications"] = reports;
     }
     spdlog::info("EventsSubscription: created {} ({} event(s), {} failed)",
@@ -1327,11 +1333,12 @@ SbiResponse NwdafSbiService::createSubscription(const SbiRequest& req) {
     return {201, "application/json", body.dump(), {{"Location", location}}};
 }
 
-SbiResponse NwdafSbiService::modifySubscription(const SbiRequest& req, const std::string& id) {
+SbiResponse NwdafSbiService::modifySubscription(const SbiRequest& req, const std::string& id,
+                                                const NwdafConfig& config) {
     if (!subs_.exists(id) || subs_.get(id).kind != "rel18")
         return problem(404, "SUBSCRIPTION_NOT_FOUND", "no subscription " + id);
     SubscriptionOutcome out;
-    if (auto err = evaluateSubscription(req, out)) return *err;
+    if (auto err = evaluateSubscription(req, out, config)) return *err;
     json rep = representation(out.request, out.accepted, out.failed, out.negotiated);
     if (!subs_.replaceRel18(id, rep))   // deleted concurrently
         return problem(404, "SUBSCRIPTION_NOT_FOUND", "no subscription " + id);

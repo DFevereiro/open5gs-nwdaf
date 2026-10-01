@@ -534,8 +534,13 @@ std::optional<std::string> NwdafCollector::readOamMetrics(const std::string& url
 }
 
 std::vector<NwdafOamSource> NwdafCollector::collectOamMetrics() {
+    std::map<std::string, std::string> endpoints;   // QOL-05: may change on reload
+    {
+        std::lock_guard<std::mutex> lk(mutex_);
+        endpoints = config_.oam_metrics_endpoints;
+    }
     std::vector<NwdafOamSource> out;
-    for (const auto& [type, url] : config_.oam_metrics_endpoints) {
+    for (const auto& [type, url] : endpoints) {
         NwdafOamSource src;
         src.nf_type  = type;
         src.endpoint = url;
@@ -553,7 +558,11 @@ std::vector<NwdafOamSource> NwdafCollector::collectOamMetrics() {
 }
 
 bool NwdafCollector::collectUeLocations() {
-    const std::string& url = config_.amf_ue_info_endpoint;
+    std::string url;   // QOL-05: may change on reload
+    {
+        std::lock_guard<std::mutex> lk(mutex_);
+        url = config_.amf_ue_info_endpoint;
+    }
     if (url.empty()) return false;
     // I-12: one poll is every page (at most 100 UEs each); a failed page
     // leaves the trajectories as they were rather than end every stay.
@@ -572,6 +581,7 @@ bool NwdafCollector::collectUeLocations() {
     if (ok) ue_locations_->observe(now, items);
     else spdlog::debug("H1.1: AMF /ue-info unreachable or not a UE list ({})", url);
     std::lock_guard<std::mutex> lk(mutex_);
+    if (url != config_.amf_ue_info_endpoint) return ok;   // reloaded meanwhile
     ue_info_source_.up = ok;
     if (ok) {
         ue_info_source_.last_success = now;
@@ -792,6 +802,18 @@ void NwdafCollector::updateConfig(int collection_interval_seconds, double ewma_a
     std::lock_guard<std::mutex> lk(mutex_);
     dl_ewma_.setAlpha(ewma_alpha);
     ul_ewma_.setAlpha(ewma_alpha);
+}
+
+void NwdafCollector::updateSources(const std::map<std::string, std::string>& oam_metrics_endpoints,
+                                   const std::string& amf_ue_info_endpoint) {
+    std::lock_guard<std::mutex> lk(mutex_);
+    config_.oam_metrics_endpoints = oam_metrics_endpoints;
+    if (amf_ue_info_endpoint != config_.amf_ue_info_endpoint) {
+        config_.amf_ue_info_endpoint = amf_ue_info_endpoint;
+        ue_info_source_ = NwdafOamSource{};   // not polled yet
+        ue_info_source_.nf_type  = "AMF";
+        ue_info_source_.endpoint = amf_ue_info_endpoint;
+    }
 }
 
 // ── BUG-02: EWMA prediction accessors ────────────────────────────────────────

@@ -2,6 +2,7 @@
 #include "nwdaf_3gpp_adapter.hpp"
 #include "nwdaf_analytics.hpp"
 #include "nwdaf_config.hpp"
+#include "nwdaf_live_config.hpp"
 #include "nwdaf_nf_monitor.hpp"
 #include "nwdaf_schema_validator.hpp"
 #include "nwdaf_subscription.hpp"
@@ -61,11 +62,13 @@ public:
     static constexpr const char* EVENTS_SUBSCRIPTION_ROOT = "/nnwdaf-eventssubscription/v1";
 
     // `nf_monitor` supplies NF instance IDs and NRF status (H1.9); null = the
-    // configured IDs only.
+    // configured IDs only. `live` is the configuration as SIGHUP reloads it
+    // (QOL-05); null = `config`, fixed. Each request reads one snapshot.
     NwdafSbiService(NwdafAnalyticsEngine& engine,
                     NwdafSubscriptionStore& subs,
                     const NwdafConfig& config,
-                    std::shared_ptr<NwdafNfMonitor> nf_monitor = nullptr);
+                    std::shared_ptr<NwdafNfMonitor> nf_monitor = nullptr,
+                    std::shared_ptr<NwdafLiveConfig> live = nullptr);
 
     // True when `path` names one of this service's resources.
     static bool handles(const std::string& path);
@@ -86,9 +89,9 @@ public:
     static std::string formatDateTime(std::chrono::system_clock::time_point tp);
 
 private:
-    SbiResponse getAnalytics(const SbiRequest& req);
-    SbiResponse createSubscription(const SbiRequest& req);
-    SbiResponse modifySubscription(const SbiRequest& req, const std::string& id);
+    SbiResponse getAnalytics(const SbiRequest& req, const NwdafConfig& config);
+    SbiResponse createSubscription(const SbiRequest& req, const NwdafConfig& config);
+    SbiResponse modifySubscription(const SbiRequest& req, const std::string& id, const NwdafConfig& config);
     SbiResponse deleteSubscription(const std::string& id);
 
     // Shared POST/PUT processing: schema, prose and capability checks on an
@@ -101,7 +104,7 @@ private:
         NwdafFeatureSet negotiated;
     };
     std::optional<SbiResponse> evaluateSubscription(const SbiRequest& req,
-                                                    SubscriptionOutcome& out);
+                                                    SubscriptionOutcome& out, const NwdafConfig& config);
 
 public:
     // Why an NF_LOAD or slice load request cannot be served as asked; each
@@ -223,23 +226,23 @@ public:
                                                         ThresholdState& state);
 
 private:
-    SbiResponse nfLoadInfo(std::map<std::string, nlohmann::json>& values,
+    SbiResponse nfLoadInfo(const NwdafConfig& config, std::map<std::string, nlohmann::json>& values,
                            const std::optional<NwdafFeatureSet>& consumer,
                            const NwdafFeatureSet& local);
-    SbiResponse ueMobilityInfo(std::map<std::string, nlohmann::json>& values,
+    SbiResponse ueMobilityInfo(const NwdafConfig& config, std::map<std::string, nlohmann::json>& values,
                                const std::optional<NwdafFeatureSet>& consumer,
                                const NwdafFeatureSet& local);
-    SbiResponse nwPerfInfo(std::map<std::string, nlohmann::json>& values,
+    SbiResponse nwPerfInfo(const NwdafConfig& config, std::map<std::string, nlohmann::json>& values,
                            const std::optional<NwdafFeatureSet>& consumer,
                            const NwdafFeatureSet& local);
-    SbiResponse sliceLoadInfo(const std::string& event,
+    SbiResponse sliceLoadInfo(const NwdafConfig& config, const std::string& event,
                               std::map<std::string, nlohmann::json>& values,
                               const std::optional<NwdafFeatureSet>& consumer,
                               const NwdafFeatureSet& local);
 
     NwdafAnalyticsEngine&   engine_;
     NwdafSubscriptionStore& subs_;
-    NwdafConfig             config_;
+    std::shared_ptr<NwdafLiveConfig> live_;
     NwdafSchemaValidator    validator_;
     std::shared_ptr<NwdafNfMonitor> nf_monitor_;
     bool                    available_ = false;

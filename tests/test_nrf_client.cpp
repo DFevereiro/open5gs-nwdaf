@@ -3,6 +3,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include "official_schema.hpp"
 #include "nwdaf_nrf_client.hpp"
+#include "nwdaf_live_config.hpp"
 #include "nwdaf_nf_monitor.hpp"
 #include "nwdaf_analytics_catalogue.hpp"
 #include <map>
@@ -184,6 +185,43 @@ TEST_CASE("H1.9: NFRegister PUTs the profile and adopts the NRF's heartbeat time
     REQUIRE(seen[0].path == std::string("/nnrf-nfm/v1/nf-instances/") + NF_ID);
     REQUIRE(json::parse(seen[0].body) == client.profile());
     REQUIRE(client.heartbeatSeconds() == 7);
+}
+
+TEST_CASE("QOL-05: a reload that changes the NF profile sends NFUpdate with the new advertisement") {
+    MockNrf nrf;
+    NwdafConfig cfg = nrfConfig();
+    cfg.model_dir = "/tmp/nwdaf_reload_models";
+    auto live = std::make_shared<NwdafLiveConfig>(cfg);
+    NwdafNrfClient client(cfg, live);
+    MockNwdafCollector collector(cfg);
+    NwdafAnalyticsEngine engine(collector, cfg);
+    NwdafNfMonitor monitor(cfg);
+    REQUIRE_FALSE(client.profile().contains("nwdafInfo"));
+
+    // nf_instance_ids reloads (NF_LOAD becomes advertised); the ports need a restart.
+    NwdafConfig fresh = cfg;
+    fresh.nf_instance_ids = {{"AMF", "11111111-1111-4111-8111-111111111111"}};
+    fresh.sbi_port = 1;
+    fresh.sbi_h2_port = 2;
+    auto r = nwdafApplyReload(fresh, *live, collector, engine, monitor, &client);
+    REQUIRE(r.changed == std::vector<std::string>{"nf_instance_ids"});
+    REQUIRE(r.profile_changed);
+    REQUIRE(r.nrf_updated);
+    const auto seen = nrf.seen();
+    REQUIRE(seen.size() == 1);
+    REQUIRE(seen[0].method == "PUT");   // TS 29.510 §5.2.2.3.1A: complete replacement
+    const json body = json::parse(seen[0].body);
+    requireOfficialProfile(body);
+    REQUIRE(body["nwdafInfo"]["nwdafEvents"] == json::array({"NF_LOAD"}));
+    // The restart-only port keeps its running value.
+    REQUIRE(body["nfServiceList"]["nnwdaf-analyticsinfo-1"]["ipEndPoints"][0]["port"] ==
+            (NwdafHttpClient::http2() ? 7780 : 7779));
+    REQUIRE(monitor.ids().at("AMF") == "11111111-1111-4111-8111-111111111111");
+
+    // The same file again: nothing changed, nothing sent.
+    r = nwdafApplyReload(fresh, *live, collector, engine, monitor, &client);
+    REQUIRE(r.changed.empty());
+    REQUIRE(nrf.seen().size() == 1);
 }
 
 TEST_CASE("H1.9: heartbeat is an NFUpdate PATCH; 404 re-registers at once") {

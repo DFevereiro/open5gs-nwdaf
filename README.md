@@ -327,7 +327,9 @@ nwdaf-cli unsubscribe sub-…
 
 ## ⚙️ Configuration
 
-Everything deployment-specific lives in [`config/nwdaf.yaml`](config/nwdaf.yaml):
+Everything deployment-specific lives in [`config/nwdaf.yaml`](config/nwdaf.yaml).
+
+**Reloading.** `systemctl reload open5gs-nwdafd` (SIGHUP) applies, without a restart: `log_level`, `collection_interval_seconds`, `ewma_alpha`, `anomaly_contamination`, the data sources (`oam_metrics_endpoints`, `amf_ue_info_endpoint`), the capability settings (`slice_capacity`, `served_tai_list`, `nf_instance_ids`), the analytics windows and the `prediction_*` settings. When the advertised analytics or served TAIs change, the NWDAF sends the new profile to the NRF (NFUpdate) and logs the advertisement before and after. A file that fails to validate is refused and the running configuration kept. Every other setting needs a restart.
 
 | Parameter | Default | Description |
 |---|---|---|

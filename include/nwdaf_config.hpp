@@ -14,6 +14,9 @@ struct NwdafSliceCapacity {
 
     // The S-NSSAI as Open5GS labels its per-slice metrics: "1-000001" or "1".
     std::string key() const { return sd.empty() ? std::to_string(sst) : std::to_string(sst) + "-" + sd; }
+    bool operator==(const NwdafSliceCapacity& o) const {
+        return sst == o.sst && sd == o.sd && max_ues == o.max_ues && max_pdu_sessions == o.max_pdu_sessions;
+    }
 };
 
 // H1.4: one tracking area this core serves (TS 29.571 Tai).

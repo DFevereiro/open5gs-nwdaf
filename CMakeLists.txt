@@ -179,6 +179,7 @@ set(NWDAF_LIB_SOURCES
     src/nwdaf_slice_load.cpp
     src/nwdaf_network_performance.cpp
     src/nwdaf_ue_location.cpp
+    src/nwdaf_live_config.cpp
     src/nwdaf_collector.cpp
     src/nwdaf_analytics.cpp
     src/nwdaf_server.cpp

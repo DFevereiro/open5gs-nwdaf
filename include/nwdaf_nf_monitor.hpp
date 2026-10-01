@@ -32,6 +32,8 @@ public:
 
     // NF type → NF instance ID: configured, then resolved from the NRF.
     std::map<std::string, std::string> ids() const;
+    // QOL-05: nf_instance_ids as reloaded on SIGHUP.
+    void setConfiguredIds(const std::map<std::string, std::string>& ids);
 
     // NfStatus of every instance the NRF listed within the status window
     // (I-8): the share of polls that found it in each state. Empty until a
@@ -56,6 +58,7 @@ private:
     NwdafConfig     config_;
     NwdafHttpClient http_;
     mutable std::mutex mutex_;
+    std::map<std::string, std::string> configured_;     // nf_instance_ids (QOL-05: reloadable)
     std::map<std::string, std::string> resolved_;       // NF type → ID
     std::map<std::string, std::deque<Poll>> polls_;     // NF type → polls in the window
 };

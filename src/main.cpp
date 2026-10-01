@@ -5,6 +5,7 @@
 #include "nwdaf_subscription.hpp"
 #include "nwdaf_nrf_client.hpp"
 #include "nwdaf_nf_monitor.hpp"
+#include "nwdaf_live_config.hpp"
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
@@ -27,10 +28,9 @@
 #endif
 
 static std::atomic<bool>   g_shutdown{false};
+static std::atomic<bool>   g_reload{false};   // QOL-05: set by SIGHUP
 static NwdafServer*        g_server_ptr    = nullptr;
 static NwdafCollector*     g_collector_ptr = nullptr;
-static NwdafAnalyticsEngine* g_engine_ptr  = nullptr;
-static std::string         g_config_path;
 
 static void signalHandler(int sig) {
     spdlog::info("Received signal {}, shutting down...", sig);
@@ -39,35 +39,11 @@ static void signalHandler(int sig) {
     if (g_collector_ptr) g_collector_ptr->stopBackgroundCollection();
 }
 
-// PROD-04: SIGHUP re-reads the config from disk and applies hot-reloadable
-// settings (log level, collection_interval, ewma_alpha, anomaly_contamination).
-// sbi_port and bind_address require a full restart.
+// PROD-04 / QOL-05: SIGHUP asks for a reload; the reload thread in main()
+// does it, outside the signal handler (parsing YAML and logging aren't
+// async-signal-safe). What reloads is NwdafLiveConfig::RELOADABLE.
 static void sighupHandler(int) {
-    spdlog::info("SIGHUP received — reloading configuration from {}", g_config_path);
-    try {
-        auto new_cfg = NwdafConfig::load(g_config_path);
-        spdlog::info("Config reloaded: log_level={} collection_interval={}s ewma_alpha={} contamination={}",
-                     new_cfg.log_level,
-                     new_cfg.collection_interval_seconds,
-                     new_cfg.ewma_alpha,
-                     new_cfg.anomaly_contamination);
-
-        // Apply log level
-        spdlog::level::level_enum level = spdlog::level::info;
-        if      (new_cfg.log_level == "trace") level = spdlog::level::trace;
-        else if (new_cfg.log_level == "debug") level = spdlog::level::debug;
-        else if (new_cfg.log_level == "warn")  level = spdlog::level::warn;
-        else if (new_cfg.log_level == "error") level = spdlog::level::err;
-        spdlog::default_logger()->set_level(level);
-
-        if (g_collector_ptr)
-            g_collector_ptr->updateConfig(new_cfg.collection_interval_seconds, new_cfg.ewma_alpha);
-        if (g_engine_ptr)
-            g_engine_ptr->updateConfig(new_cfg.anomaly_contamination);
-
-    } catch (const std::exception& e) {
-        spdlog::error("Config reload failed: {}", e.what());
-    }
+    g_reload = true;
 }
 
 static void setupLogging(const NwdafConfig& cfg) {
@@ -126,12 +102,12 @@ int main(int argc, char* argv[]) {
     // H1.9: NF instance IDs and NRF status for NF_LOAD — configured IDs, and
     // polls of the NRF when nrf_nf_discovery is set.
     auto nf_monitor = std::make_shared<NwdafNfMonitor>(config);
-    NwdafServer           server(engine, subs, config, nf_monitor);
+    // QOL-05: the reloadable settings, shared by the SBI, notifier and NRF client.
+    auto live = std::make_shared<NwdafLiveConfig>(config);
+    NwdafServer           server(engine, subs, config, nf_monitor, live);
 
     g_server_ptr    = &server;
     g_collector_ptr = &collector;
-    g_engine_ptr    = &engine;
-    g_config_path   = config_path;
     std::signal(SIGTERM, signalHandler);
     std::signal(SIGINT,  signalHandler);
     std::signal(SIGHUP,  sighupHandler);  // PROD-04
@@ -139,7 +115,7 @@ int main(int argc, char* argv[]) {
     collector.startBackgroundCollection();
 
     // H1.9: NRF NFManagement — NFRegister now, NFUpdate heartbeats, NFDeregister on exit.
-    NwdafNrfClient nrf(config);
+    NwdafNrfClient nrf(config, live);
     if (config.nrf_register_on_startup) nrf.registerNf();
 
     // H1.9: poll the NRF (NFListRetrieval / NFProfileRetrieval).
@@ -161,7 +137,7 @@ int main(int argc, char* argv[]) {
     // PROD-03: pass server's atomic counters so /metrics can expose them
 #ifdef NWDAF_ENABLE_PUSH_DELIVERY
     NwdafNotifier notifier(subs, engine, 5,
-                           &server.notif_total_, &server.notif_failures_, config, nf_monitor);
+                           &server.notif_total_, &server.notif_failures_, config, nf_monitor, live);
     notifier.start();
 #endif
 
@@ -191,6 +167,25 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // QOL-05: SIGHUP reloads. A setting that fails to validate keeps the
+    // running configuration; a changed NF profile is sent as NFUpdate.
+    std::thread reload_thread([&]() {
+        while (!g_shutdown) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            if (!g_reload.exchange(false)) continue;
+            spdlog::info("SIGHUP: reloading configuration from {}", config_path);
+            try {
+                const auto r = nwdafApplyReload(NwdafConfig::load(config_path), *live, collector, engine,
+                                                *nf_monitor, config.nrf_register_on_startup ? &nrf : nullptr);
+                if (r.profile_changed && config.nrf_register_on_startup && !r.nrf_updated)
+                    spdlog::warn("SIGHUP: the NF profile changed but NFUpdate failed; the next "
+                                 "re-registration sends it");
+            } catch (const std::exception& e) {
+                spdlog::error("Config reload failed, keeping the running configuration: {}", e.what());
+            }
+        }
+    });
+
 #ifdef NWDAF_USE_SD_JOURNAL
     sd_notify(0, "READY=1");
 #endif
@@ -203,6 +198,7 @@ int main(int argc, char* argv[]) {
 #endif
 
     if (nrf_hb_thread.joinable()) nrf_hb_thread.join();
+    if (reload_thread.joinable()) reload_thread.join();
     if (nrf_poll_thread.joinable()) nrf_poll_thread.join();
     if (config.nrf_register_on_startup) nrf.deregister();
 

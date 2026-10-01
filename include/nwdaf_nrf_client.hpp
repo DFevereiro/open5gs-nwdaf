@@ -1,6 +1,8 @@
 #pragma once
 #include "nwdaf_config.hpp"
 #include "nwdaf_http_client.hpp"
+#include "nwdaf_live_config.hpp"
+#include <memory>
 #include <nlohmann/json.hpp>
 #include <string>
 
@@ -11,12 +13,13 @@
 // only (never transient data availability) and carries only what the NWDAF
 // actually supports — both Nnwdaf services at their pinned API versions, the
 // HTTP/2 endpoint, the local supported-feature bitmasks, and an nwdafInfo
-// listing the advertised analytics. Capability-affecting settings are
-// restart-only; a restart re-registers, and NFRegister (PUT) replaces the
-// profile the NRF holds.
+// listing the advertised analytics. Capability-affecting settings reload on
+// SIGHUP (QOL-05): the profile is built from the live configuration, and a
+// changed profile is sent as NFUpdate.
 class NwdafNrfClient {
 public:
-    explicit NwdafNrfClient(const NwdafConfig& config);
+    // `live`: the reloadable configuration (null = `config`, fixed).
+    explicit NwdafNrfClient(const NwdafConfig& config, std::shared_ptr<NwdafLiveConfig> live = nullptr);
 
     // The NFProfile this NWDAF registers.
     nlohmann::json profile() const;
@@ -30,6 +33,10 @@ public:
     // the profile, so the NWDAF registers again at once.
     Heartbeat heartbeat();
 
+    // NFUpdate, NF profile complete replacement (PUT, TS 29.510 V18.11.0
+    // §5.2.2.3.1A): after a reload changed the profile.
+    bool updateProfile();
+
     // NFDeregister (DELETE), on shutdown.
     bool deregister();
 
@@ -38,7 +45,8 @@ public:
 private:
     std::string instanceUrl() const;
 
-    NwdafConfig     config_;
+    NwdafConfig     config_;   // restart-only settings: the NRF, identity, endpoints
+    std::shared_ptr<NwdafLiveConfig> live_;
     NwdafHttpClient http_;
     int             heartbeat_s_;
 };
