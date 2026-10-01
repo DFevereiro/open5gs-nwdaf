@@ -58,7 +58,7 @@ die()  { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 SUDO=""; [[ $(id -u) -ne 0 ]] && SUDO=sudo
 
 # ── Profile → CMake flags and apt packages ──────────────────────────────────
-PKGS=(build-essential cmake git pkg-config ca-certificates libsqlite3-dev)
+PKGS=(build-essential cmake git pkg-config ca-certificates libsqlite3-dev curl jq)   # curl, jq: nwdaf-cli
 case "$PROFILE" in
     rel18)
         FLAGS=(-DNWDAF_USE_SD_JOURNAL=ON -DNWDAF_USE_TLS=ON -DNWDAF_USE_HTTP2=ON -DNWDAF_REQUIRE_REL18_PROFILE=ON)
@@ -127,6 +127,18 @@ fi
 if [[ $INSTALL == 1 ]]; then
     say "Installing"
     $SUDO cmake --install "$BUILD_DIR"
+    # The systemd unit runs as `open5gs` (the Open5GS packages' user), may
+    # write only to /opt/nwdaf and /var/log/open5gs, and reads the NFs'
+    # journals through the systemd-journal group.
+    if id open5gs >/dev/null 2>&1; then
+        say "Preparing /opt/nwdaf and the open5gs user for the service"
+        $SUDO mkdir -p /opt/nwdaf/models /var/log/open5gs
+        $SUDO chown -R open5gs:open5gs /opt/nwdaf
+        if getent group systemd-journal >/dev/null; then $SUDO usermod -aG systemd-journal open5gs; fi
+        if command -v systemctl >/dev/null; then $SUDO systemctl daemon-reload || true; fi
+    else
+        warn "no 'open5gs' user (Open5GS isn't installed here): create it, or change User= in /etc/systemd/system/open5gs-nwdafd.service"
+    fi
 fi
 
 say "Done: $BUILD_DIR/open5gs-nwdafd ($PROFILE profile)"

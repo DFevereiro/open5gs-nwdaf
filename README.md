@@ -4,7 +4,7 @@
 
 ### Production-grade Network Data Analytics Function for 5G Core — in modern C++
 
-**Standalone NWDAF that plugs into [Open5GS](https://open5gs.org) and brings native ML-driven analytics to your 5G core — Release 18 compliant for the supported scope.** Both Nnwdaf services over HTTP/2 with the NF_LOAD, SLICE_LOAD_LEVEL, NSI_LOAD_LEVEL, NETWORK_PERFORMANCE and UE_MOBILITY analytics, the NRF lifecycle and discovery, mTLS and OAuth2; scope and evidence in [`docs/3gpp-rel18-compliance.md`](docs/3gpp-rel18-compliance.md).
+**Standalone NWDAF that runs beside an [Open5GS](https://open5gs.org) core, with no core patches, and serves analytics through the 3GPP Release 18 Nnwdaf services — Release 18 compliant for the supported scope.** NF_LOAD, SLICE_LOAD_LEVEL, NSI_LOAD_LEVEL, NETWORK_PERFORMANCE and UE_MOBILITY over HTTP/2, with predictions, subscriptions, the NRF lifecycle, mTLS and OAuth2; scope and evidence in [`docs/3gpp-rel18-compliance.md`](docs/3gpp-rel18-compliance.md).
 
 [![CI](https://github.com/cem8kaya/open5gs-nwdaf/actions/workflows/ci.yml/badge.svg)](https://github.com/cem8kaya/open5gs-nwdaf/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
@@ -12,482 +12,444 @@
 [![3GPP Rel-18 (supported scope)](https://img.shields.io/badge/3GPP-Release_18_(supported_scope)-green.svg)](docs/3gpp-rel18-compliance.md)
 [![TS 23.288](https://img.shields.io/badge/TS_23.288-V18.13.0-orange.svg)](https://portal.3gpp.org/desktopmodules/Specifications/SpecificationDetails.aspx?specificationId=3579)
 [![TS 29.520](https://img.shields.io/badge/TS_29.520-V18.14.0-orange.svg)](https://portal.3gpp.org/desktopmodules/Specifications/SpecificationDetails.aspx?specificationId=3355)
+[![Open5GS](https://img.shields.io/badge/Open5GS-v2.8.0_verified-blue.svg)](#-open5gs-compatibility)
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ED.svg?logo=docker&logoColor=white)](Dockerfile)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](#-contributing)
 
-[Quick Start](#-quick-start) · [Architecture](#-architecture) · [3GPP Compliance](#-3gpp-compliance) · [REST API](#-rest-api-ts-29520-sbi) · [Dashboard](#-dashboard--observability) · [Roadmap](#-roadmap) · [Contributing](#-contributing)
+[Features](#-features) · [Installation](#-installation) · [Open5GS compatibility](#-open5gs-compatibility) · [Release 18](#-3gpp-release-18-compliance) · [API](#-api) · [Configuration](#%EF%B8%8F-configuration) · [Roadmap](#-roadmap)
 
 </div>
-
-<!-- Add a dashboard screenshot at docs/assets/dashboard-overview.png and uncomment:
-![NWDAF Intelligence Dashboard](docs/assets/dashboard-overview.png)
--->
 
 ---
 
 ## 💡 Why this project?
 
-The **NWDAF (Network Data Analytics Function)** is the intelligence layer of the 5G Core defined by 3GPP — yet no complete, freely available open-source implementation exists that works out of the box with Open5GS. This project fills that gap:
+The **NWDAF (Network Data Analytics Function)** is the intelligence layer of the 5G Core defined by 3GPP, yet no complete, freely available open-source implementation works out of the box with Open5GS. This project fills that gap:
 
-- **Zero-friction Open5GS integration** — registers with the NRF, reads journald/`/proc`/`/sys`/MongoDB, no core patches required
-- **Native, dependency-light ML** — Isolation Forest anomaly detection and EWMA prediction implemented in pure C++, no Python runtime, no TensorFlow
-- **Standards-first:** the Rel-18 Nnwdaf services (TS 29.520) over HTTP/2, with requests validated against the official 3GPP OpenAPI files, and the TS 29.510 NRF lifecycle. It advertises only what it can truthfully serve; scope and evidence are in [`docs/3gpp-rel18-compliance.md`](docs/3gpp-rel18-compliance.md).
-- **Ops-ready from day one** — Prometheus metrics, Grafana dashboard, React web UI, systemd unit, hardened Docker build, TLS/mTLS, rate limiting
+- **No core patches.** It reads what Open5GS already exposes: its metrics, its per-UE list, the NRF, systemd, journald, `/proc`, `/sys` and MongoDB.
+- **Standards-first.** The Rel-18 Nnwdaf services (TS 29.520) over HTTP/2, with every request validated against the official 3GPP OpenAPI files, and the TS 29.510 NRF lifecycle. It advertises only what the configured data sources can back.
+- **Native, dependency-light ML.** Isolation Forest, EWMA, a Holt trend forecaster and the ITU-T G.107 E-model, in plain C++: no Python runtime.
+- **Operable.** Prometheus metrics, a Grafana dashboard, a web UI, a hardened systemd unit, reload without restart, TLS/mTLS and rate limiting.
 
 ## ✨ Features
 
 | Capability | Details |
 |---|---|
-| 🛰️ **3GPP Rel-18 SBI** | Nnwdaf_AnalyticsInfo and Nnwdaf_EventsSubscription (TS 29.520) over HTTP/2 on port 7780. Requests are validated against the official 3GPP OpenAPI files, with supported-features negotiation and the spec's failure semantics. Serves **NF_LOAD**, **SLICE_LOAD_LEVEL**, **NSI_LOAD_LEVEL**, **NETWORK_PERFORMANCE** (`NUM_OF_UE`, `SESS_SUCC_RATIO`) and **UE_MOBILITY** (TA and cell per UE). NF_LOAD and NSI_LOAD_LEVEL are also predicted for a future period, with a confidence |
-| 🔔 **Subscriptions** | Subscribe / modify / unsubscribe with PERIODIC, ONE_TIME and THRESHOLD / ON_EVENT_DETECTION reporting, immediate reports, and notifications over HTTP/2 |
-| 📊 **Operator API** | 10 analytics on `/nwdaf-analytics/v1` for the dashboard and Prometheus: NF load, UE mobility, UE communication, abnormal behaviour, QoS sustainability, service experience, network performance, SM congestion, redundant transmission, dispersion |
-| 🤖 **Embedded ML** | Native C++ Isolation Forest (anomaly detection), EWMA predictor (load forecasting) and ITU-T G.107 E-model (MOS). Atomic model persistence, retraining via the API |
-| 📥 **Data collection** | No core patches: systemd unit states, journald, `/proc`, `/sys` throughput and MongoDB, plus each NF's Prometheus metrics (TS 28.552 measurements, per slice) as OAM input |
-| 🧭 **NRF Integration** | TS 29.510 NFRegister, heartbeat with re-registration, NFDeregister, and NF instance IDs and NF status from the NRF. The NRF profile advertises only what the configuration supports |
-| 🔐 **Security** | TLS and mutual TLS on both listeners, OAuth 2.0 access-token validation on the 3GPP interfaces (TS 33.501), NRF certificate verification, per-IP and global rate limiting, hardened build flags (`-D_FORTIFY_SOURCE=2`, PIE, RELRO) |
-| 🗄️ **Persistence** | SQLite-backed throughput history and subscription store that survive restarts |
-| 📈 **Observability** | Prometheus `/metrics`, Grafana dashboard JSON, readiness probe, and a `/health` that shows metric-scrape status and which Rel-18 analytics are advertised (with the missing configuration for the rest) |
-| 🖥️ **Web Dashboard** | React + Recharts "NWDAF Intelligence" UI: live throughput, anomaly detection, MOS scores, traffic simulator, subscription management |
-| 🧰 **Test tools** | `nwdaf-cli` (3GPP consumer), `nwdaf-notify-sink` (prints notifications), `nwdaf-fake-oam` (synthetic Open5GS metrics): exercise the 3GPP interfaces without a core or UEs |
-| 🧪 **Tested** | 271 Catch2 test cases: unit, integration over HTTP/2, official-schema conformance, a mock Open5GS and a mock NRF. Checked live against Open5GS v2.8.0 with UERANSIM UEs ([`demo/`](demo/)) |
-| 📦 **Deployable** | Two-stage Docker build (Ubuntu 22.04), systemd service, `cmake --install`; CI on Ubuntu 22.04 and 20.04 |
+| 🛰️ **3GPP Rel-18 interfaces** | Nnwdaf_AnalyticsInfo and Nnwdaf_EventsSubscription (TS 29.520) over HTTP/2 on port 7780: official-schema validation, supported-features negotiation and the spec's failure semantics. Analytics: **NF_LOAD**, **SLICE_LOAD_LEVEL**, **NSI_LOAD_LEVEL**, **NETWORK_PERFORMANCE** (`NUM_OF_UE` for any area, `SESS_SUCC_RATIO`) and **UE_MOBILITY** (TA and cell per UE) |
+| 🔮 **Predictions** | NF_LOAD and NSI_LOAD_LEVEL for a future period, with a confidence (Holt's linear trend over the collected history) |
+| 🔔 **Subscriptions** | Subscribe / modify / unsubscribe with PERIODIC, ONE_TIME and THRESHOLD / ON_EVENT_DETECTION reporting and immediate reports; notifications over HTTP/2 |
+| 🧭 **NRF integration** | TS 29.510 NFRegister, heartbeat with re-registration, NFUpdate when a reload changes the advertisement, NFDeregister; NF instance IDs and NF status from the NRF |
+| 📥 **Data collection** | Open5GS metrics (TS 28.552 measurements per slice), the AMF's per-UE list (`/ue-info`), the NRF, systemd units, journald, `/proc`, `/sys` and MongoDB. What each analytics needs, and where it comes from, is in `/health` |
+| 📊 **Operator API** | 10 analytics on `/nwdaf-analytics/v1` for the dashboard and Prometheus, in this project's own format: NF load, UE mobility, UE communication, abnormal behaviour, QoS sustainability, service experience, network performance, SM congestion, redundant transmission, dispersion |
+| 🔐 **Security** | TLS and mutual TLS on both listeners, OAuth 2.0 access-token validation on the 3GPP interfaces (TS 33.501), NRF certificate verification, request body and rate limits, a hardened systemd unit and build flags |
+| 🔁 **Operations** | `systemctl reload` applies the data-source, capability, window and prediction settings without a restart; a file that fails to validate is refused |
+| 📈 **Observability** | Prometheus `/metrics`, a Grafana dashboard, readiness probe, and a `/health` showing source status, the advertised analytics (with what the rest lack) and the Open5GS workarounds in force |
+| 🖥️ **Web dashboard** | React + Recharts UI: throughput, anomaly detection, MOS, traffic simulator, subscription management |
+| 🧰 **Tools** | `build.sh` (one-command build and install), `nwdaf-cli` (3GPP consumer), `nwdaf-notify-sink`, `nwdaf-fake-oam` (synthetic Open5GS data) and `nwdaf-local` (all of them with the daemon, no core needed) |
+| 🧪 **Tested** | 306 Catch2 test cases, including official-schema conformance and HTTP/2 integration; a smoke test with synthetic Open5GS data in CI; a nightly check against a live Open5GS core with UERANSIM UEs |
 
 ## 🏗 Architecture
 
 ```mermaid
 flowchart LR
     subgraph Open5GS["Open5GS 5G Core"]
-        NF["AMF / SMF / UPF / ...<br/>(systemd units)"]
+        MET["AMF / SMF metrics<br/>+ AMF /ue-info"]
+        NF["NF processes<br/>(systemd, journald)"]
         NRF["NRF"]
         MDB[("MongoDB")]
     end
 
     subgraph NWDAF["open5gs-nwdafd (C++17)"]
-        COL["NwdafCollector<br/><i>journald · /proc · /sys · MongoDB</i>"]
-        ENG["NwdafAnalyticsEngine"]
-        ML["ML Core<br/><i>IsolationForest · EwmaPredictor</i>"]
-        SRV["NwdafServer<br/><i>SBI · cpp-httplib · TLS</i>"]
-        NOT["NwdafNotifier<br/><i>push delivery</i>"]
-        DB[("SQLite<br/>history + subs")]
+        COL["NwdafCollector"]
+        ENG["Analytics engine<br/>+ ML"]
+        SBI["3GPP Nnwdaf services<br/>HTTP/2 · :7780"]
+        OPS["Operator API<br/>HTTP/1.1 · :7779"]
+        NOT["Notifier"]
     end
 
     subgraph Consumers["Consumers"]
-        UI["React Dashboard"]
-        GRAF["Grafana / Prometheus"]
-        NFC["NF Consumers<br/>(PCF, AMF, OAM ...)"]
+        NFC["NFs, NEF, AF<br/>(3GPP)"]
+        UI["Dashboard"]
+        GRAF["Prometheus / Grafana"]
     end
 
-    NF -- "logs & stats" --> COL
+    MET -- "OAM input" --> COL
+    NF -- "health, CPU, events" --> COL
     MDB -- "subscriber count" --> COL
+    NRF -- "NF instance IDs, status" --> COL
     COL --> ENG
-    ENG <--> ML
-    ENG <--> DB
-    ENG --> SRV
+    ENG --> SBI
+    ENG --> OPS
     ENG --> NOT
-    SRV <-- "Nnwdaf SBI (HTTP/JSON)" --> NFC
-    SRV --> UI
-    SRV -- "/metrics" --> GRAF
-    NWDAF -- "register + heartbeat<br/>TS 29.510" --> NRF
-    NOT -- "event notifications" --> NFC
+    SBI <-- "Nnwdaf_AnalyticsInfo,<br/>Nnwdaf_EventsSubscription" --> NFC
+    NOT -- "notifications" --> NFC
+    OPS --> UI
+    OPS -- "/metrics" --> GRAF
+    NWDAF -- "register, heartbeat,<br/>update" --> NRF
 ```
 
-**Data collection strategy** (Open5GS-specific, all configurable):
+Two surfaces: the **3GPP interfaces** follow the official Rel-18 schemas; the **operator API** is this project's own, for the dashboard and Prometheus.
 
-1. **NF health** — systemd unit states via the `nf_service_names` map (no fragile string-stripping)
-2. **Throughput** — reads `/sys/class/net/<iface>/statistics/` directly, because the `gtp5g` kernel module bypasses user-space capture (tcpdump/eBPF)
-3. **UE activity** — AMF/SMF journald parsing with a configurable `supi_regex` (`imsi-(\d{15})` for Open5GS ≥ v2.7.6)
-4. **Subscriber count** — optional MongoDB (UDR/UDM database) integration
+## 🚀 Installation
 
-## 📐 3GPP Compliance
+**Try it first, without installing anything on a core:**
+- [`demo/`](demo/README.md) runs an Open5GS v2.8.0 core, UERANSIM UEs, this NWDAF and the dashboard in one container: `demo/run.sh`, then `docker exec -it nwdaf-demo nwdaf-demo`.
+- After a build, `tools/nwdaf-local` runs the NWDAF against synthetic Open5GS data ([Tools](#-tools)).
 
-This table covers the **operator API** (`/nwdaf-analytics/v1/*`), where each ID
-is served in this project's own format. On the 3GPP interfaces, `NF_LOAD`,
-`SLICE_LOAD_LEVEL`, `NSI_LOAD_LEVEL`, `NETWORK_PERFORMANCE` and `UE_MOBILITY` are served in Rel-18 form; the others
-are withheld until their inputs exist. The
-per-ID reasons are in [`docs/3gpp-rel18-compliance.md`](docs/3gpp-rel18-compliance.md) §4.
+**Requirements.** Ubuntu 22.04 or newer for the Release 18 build profile (HTTP/2 + TLS, OpenSSL ≥ 3.0); Ubuntu 20.04 builds without TLS. CMake ≥ 3.22, GCC ≤ 15 (the pinned yaml-cpp doesn't build with GCC 16), and network access on the first configure, which downloads the C++ dependencies and the official 3GPP OpenAPI files. CI builds on Ubuntu 22.04 and 20.04.
 
-| Analytics ID | TS 23.288 V18.13.0 | ML backing | Status |
-|---|---|---|---|
-| `NF_LOAD` | §6.5 | EWMA load prediction | ✅ Implemented |
-| `UE_MOBILITY` | §6.7.2 | Journald registrations (operator API); TA and cell stays from the AMF's UE list on the 3GPP interfaces (I-12) | ✅ Implemented |
-| `UE_COMMUNICATION` | §6.7.3 | — | ✅ Implemented |
-| `ABNORMAL_BEHAVIOUR` | §6.7.5 | Isolation Forest | ✅ Implemented |
-| `SERVICE_EXPERIENCE` | §6.4 | MOS estimation | ✅ Implemented |
-| `NETWORK_PERFORMANCE` | §6.6 | Weighted composite score (operator API); `NUM_OF_UE` and `SESS_SUCC_RATIO` on the 3GPP interfaces (I-11) | ✅ Implemented |
-| `QOS_SUSTAINABILITY` | §6.9 | Threshold trend analysis | ✅ Implemented |
-| `SM_CONGESTION` | §6.12 | Failure-ratio + NF-load bands | ✅ Implemented |
-| `RED_TRANS_EXP` | §6.13 | Rate-stability estimator | ✅ Implemented |
-| `DISPERSION` | §6.10 | Gini / HHI concentration | ✅ Implemented |
-| `DN_PERFORMANCE` | §6.14 | — | ⬜ Planned (needs `Naf_EventExposure`) |
-| `SLICE_LOAD_LEVEL`, `NSI_LOAD_LEVEL` | §6.3 | NSAC-style occupancy (I-9) | 3GPP interfaces only, for configured `slice_capacity` (H1.2) |
-| `USER_DATA_CONGESTION` | §6.8 | — | ⬜ Planned (needs per-location input) |
-| `WLAN_PERFORMANCE` | §6.11 | — | ⬜ Planned (N3IWF-dependent) |
-
-**Known scope limits.** `SM_CONGESTION`, `RED_TRANS_EXP` and
-`DISPERSION` each report what the current journald/procfs data path can
-actually observe and name the input they cannot yet see in a `note` field —
-per-path GTP-U counters, per-location cell data, and per-slice decomposition
-respectively. See [`docs/ENHANCEMENT_PLAN_5G_6G.md`](docs/ENHANCEMENT_PLAN_5G_6G.md)
-H1.1–H1.3 for the work that lifts those limits.
-
-IDs are spelled as in the Rel-18 `NwdafEvent` enum. The operator API still accepts the legacy spellings `QoS_SUSTAINABILITY` and `REDUNDANT_TRANSMISSION` on input.
-
-**Release 18.** The frozen Rel-18 baseline is [`docs/frozen-standards.md`](docs/frozen-standards.md), and the gap analysis is [`docs/3gpp-rel18-compliance.md`](docs/3gpp-rel18-compliance.md). Milestone **M1 passed** (2026-09-28): the NWDAF is **Release 18 compliant for the supported scope**, in builds with the `rel18-sbi` profile (HTTP/2 + TLS). The Rel-18 3GPP interfaces serve **NF_LOAD**, **SLICE_LOAD_LEVEL** and **NSI_LOAD_LEVEL** for slices with a configured capacity (load level per interpretation I-9), **NETWORK_PERFORMANCE** (`NUM_OF_UE` for any area of TAs or cells with the AMF's UE list, `SESS_SUCC_RATIO` for the configured served area; I-11), and **UE_MOBILITY** for SUPIs, from the AMF's per-UE list (I-12). NF_LOAD and NSI_LOAD_LEVEL are also predicted for a future analytics target period within the prediction horizon, with a confidence (I-13). The other analytics listed above are served on the operator API; their Rel-18 forms are not yet advertised, because they need inputs the scraped data path lacks. Open5GS v2.8.0 exposes no NF event-exposure services and no OAuth 2.0 (see the compliance doc).
-
-### Open5GS compatibility
-
-The 3GPP interfaces are the same whatever core the NWDAF runs beside; what the core can feed decides which analytics they serve. Each Rel-18 analytics needs certain inputs (UE locations, UEs per slice, session counters, …), and it is advertised only when those inputs have a source (`dataSources` in `/health`). With Open5GS, which has no NF event exposure, the sources are its metrics and per-UE JSON, an OAM-style input TS 23.288 allows. The Open5GS behaviours the NWDAF works around (`O5GS-01` … `O5GS-08`) are listed, with the version they were verified on, in [`docs/3gpp-rel18-compliance.md`](docs/3gpp-rel18-compliance.md) §9.2. Set `open5gs_version` to your core's version: an unverified one is warned about at startup. A nightly CI job (`demo/interop-check.sh`) checks those workarounds against a live Open5GS core.
-
-### OpenAPI contract
-
-The SBI *as currently served* is published as an OpenAPI 3.0 document at
-[`docs/openapi/nwdaf-analytics-v1.yaml`](docs/openapi/nwdaf-analytics-v1.yaml),
-and served from the running instance at `GET /nwdaf-analytics/v1/openapi` so NF
-consumers can fetch the contract without cloning the repository:
+### 1. Build
 
 ```bash
-curl "http://127.0.0.1:7779/nwdaf-analytics/v1/openapi" -o nwdaf-openapi.yaml
+git clone https://github.com/cem8kaya/open5gs-nwdaf.git && cd open5gs-nwdaf
+./build.sh --deps --tests        # installs the apt packages, builds the Rel-18 profile, runs the tests
 ```
 
-It is not documentation-by-hand: `tests/test_openapi_conformance.cpp` loads it
-and validates live responses from every endpoint against the declared schemas,
-so the spec and the implementation cannot drift apart without CI failing.
+`build.sh` profiles: `rel18` (default: HTTP/2 + TLS, the build the Release 18 claim covers), `full` (TLS off, for OpenSSL < 3.0), `minimal` (no journald, TLS or HTTP/2: development only, and it can't register with an Open5GS NRF). `./build.sh --help` lists the options, such as `--openapi-dir` for an offline copy of the 3GPP files.
 
-This document describes this project's own API. It is validated against
-itself, not against the official 3GPP Rel-18 artifacts. Official-schema
-conformance is roadmap item H1.6 (extended) / H1.7.
-
-## 🚀 Quick Start
-
-**Live demo.** [`demo/`](demo/README.md) runs an Open5GS v2.8.0 core, UERANSIM
-UEs and this NWDAF in one container. `demo/run.sh` starts it; then
-`docker exec -it nwdaf-demo nwdaf-demo` walks through registrations, UE
-traffic, the Rel-18 analytics and a subscription.
-
-> **Verified on CI:** Ubuntu 22.04 (full: sd-journal + TLS + SQLite) and Ubuntu 20.04 (sd-journal + SQLite, TLS off) — see the [CI workflow](.github/workflows/ci.yml).
-
-### Prerequisites
-
-**Toolchain (required):**
+<details>
+<summary>Manual CMake steps</summary>
 
 ```bash
-sudo apt-get update
-sudo apt-get install -y --no-install-recommends \
-    build-essential cmake git pkg-config ca-certificates
-```
-
-- **CMake ≥ 3.22** is required. Ubuntu 22.04 satisfies this; **Ubuntu 20.04 ships CMake 3.16**, so install a newer one there (e.g. `pip3 install "cmake>=3.22,<4"` or the [Kitware APT repo](https://apt.kitware.com/)).
-- An **internet connection is needed on the first configure**: cpp-httplib, nlohmann/json, yaml-cpp, spdlog (and Catch2 for tests) are fetched automatically via CMake `FetchContent`. You do **not** need to install these from apt.
-
-**Optional feature dependencies** (each degrades gracefully if absent):
-
-```bash
-sudo apt-get install -y --no-install-recommends \
-    libsystemd-dev \    # journald collection      (NWDAF_USE_SD_JOURNAL=ON)
-    libssl-dev \        # TLS on the SBI            (NWDAF_USE_TLS=ON, needs OpenSSL ≥ 3.0)
-    libsqlite3-dev \    # restart-safe persistence  (history_backend=sqlite)
-    libnghttp2-dev libcurl4-openssl-dev \   # HTTP/2 SBI (NWDAF_USE_HTTP2=ON; needed to register with an Open5GS NRF)
-    libmongoc-dev libmongocxx-dev   # subscriber count via MongoDB
-```
-
-> **TLS needs OpenSSL ≥ 3.0** (Ubuntu 22.04+). On Ubuntu 20.04 (OpenSSL 1.1.1), build with `-DNWDAF_USE_TLS=OFF`.
-
-### Build
-
-**One command** — `build.sh` installs the packages its profile needs (`--deps`, apt), configures with download retries, builds, and optionally tests and installs:
-
-```bash
-./build.sh --deps --tests            # the Rel-18 compliant build (HTTP/2 + TLS), with its tests
-./build.sh --install                 # then install: binary, config, OpenAPI files, systemd unit
-./build.sh --profile full            # HTTP/2, TLS off (OpenSSL < 3.0, e.g. Ubuntu 20.04)
-./build.sh --profile minimal         # dev-legacy: no journald, TLS or HTTP/2
-```
-
-It checks the known toolchain pitfalls first (CMake < 3.22, OpenSSL < 3.0 for TLS, GCC ≥ 16 with the pinned yaml-cpp, CMake 4's policy flag). `./build.sh --help` lists every option. The manual steps:
-
-**Ubuntu 22.04+ (full features):**
-
-```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --parallel $(nproc)
-```
-
-**Ubuntu 20.04 (TLS off — OpenSSL 1.1.1):**
-
-```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DNWDAF_USE_TLS=OFF
-cmake --build build --parallel $(nproc)
-```
-
-**Minimal build** (no journald, no TLS — e.g. non-systemd hosts or containers):
-
-```bash
-cmake -S . -B build \
-    -DNWDAF_USE_SD_JOURNAL=OFF \
-    -DNWDAF_USE_TLS=OFF
-cmake --build build --parallel $(nproc)
-```
-
-### Run
-
-```bash
-./build/open5gs-nwdafd --config config/nwdaf.yaml
-curl http://127.0.0.1:7779/nwdaf-analytics/v1/health
-```
-
-### Run tests
-
-```bash
+sudo apt-get install -y --no-install-recommends build-essential cmake git pkg-config ca-certificates \
+    libsqlite3-dev libsystemd-dev libssl-dev libnghttp2-dev libcurl4-openssl-dev
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DNWDAF_REQUIRE_REL18_PROFILE=ON
+cmake --build build --parallel "$(nproc)"
 cd build && ctest --output-on-failure
 ```
+Ubuntu 20.04: add `-DNWDAF_USE_TLS=OFF` and drop `-DNWDAF_REQUIRE_REL18_PROFILE=ON`; it ships CMake 3.16, so install a newer one (`pip3 install "cmake>=3.22,<4"`). CMake 4 needs `-DCMAKE_POLICY_VERSION_MINIMUM=3.5`. The optional MongoDB driver (`libmongoc-dev libmongocxx-dev`) gives the operator API's subscriber count; without it, `mongosh` is used if present.
+</details>
+
+### 2. Install
+
+```bash
+./build.sh --install
+```
+
+This installs the daemon and tools to `/usr/local/bin`, the configuration to `/etc/open5gs/nwdaf.yaml`, the OpenAPI files to `/etc/open5gs/openapi/`, and the systemd unit. The unit runs as `open5gs`, the Open5GS packages' user, with write access only to `/opt/nwdaf` and `/var/log/open5gs`; `build.sh` creates `/opt/nwdaf`, gives it to that user and adds the user to `systemd-journal`, so the NWDAF can read the NFs' journals.
+
+### 3. Configure for Open5GS
+
+Open5GS v2.8.0 serves its metrics, and the AMF's per-UE list, from a `metrics:` block in each NF's YAML; the packaged configuration enables it on loopback (AMF `127.0.0.5:9090`, SMF `127.0.0.4:9090`). Check it from the NWDAF's host:
+
+```bash
+curl -s http://127.0.0.5:9090/metrics | grep registeredsubnbr     # AMF: UEs per slice (once UEs register)
+curl -s http://127.0.0.4:9090/metrics | grep pdusessioncreation    # SMF: session counters
+curl -s http://127.0.0.5:9090/ue-info | jq .pager                  # AMF: the per-UE list
+```
+
+Then set, in `/etc/open5gs/nwdaf.yaml` (every setting is explained in the file):
+
+```yaml
+  nf_instance_id: "<uuidgen output>"    # once, and keep it
+  plmn_mcc: "999"                       # amf.yaml plmn_id
+  plmn_mnc: "70"
+  open5gs_version: "2.8.0"
+
+  nrf_uri: "http://127.0.0.10:7777"     # nrf.yaml sbi server
+  nrf_nf_discovery: true                # NF instance IDs and status    → NF_LOAD
+
+  oam_metrics_endpoints:                # UEs/sessions per slice, session counters
+    AMF: "http://127.0.0.5:9090/metrics"
+    SMF: "http://127.0.0.4:9090/metrics"
+  amf_ue_info_endpoint: "http://127.0.0.5:9090/ue-info"   # UE locations → UE_MOBILITY, NUM_OF_UE per area
+
+  served_tai_list:                      # amf.yaml tai list (unquoted tac = decimal) → SESS_SUCC_RATIO
+    - {tac: 1}
+  slice_capacity:                       # your admission maxima per S-NSSAI → SLICE / NSI_LOAD_LEVEL
+    - snssai: {sst: 1}
+      max_ues: 1000
+      max_pdu_sessions: 2000
+```
+
+Leave out a block and the analytics it enables is simply not advertised. Keep `oauth_enabled: false`: Open5GS issues no tokens. Where the NWDAF must run for each source is in [Open5GS compatibility](#-open5gs-compatibility).
+
+### 4. Start and verify
+
+```bash
+sudo systemctl enable --now open5gs-nwdafd
+nwdaf-cli health
+```
+
+`health` should show every `oamSources` entry `up`, the configured analytics under `rel18Analytics.advertised` (and, for any other, what it lacks), the sources under `dataSources`, and `open5gs.verified: true`. Then, for example:
+
+```bash
+nwdaf-cli get NETWORK_PERFORMANCE --nw-perf NUM_OF_UE --tai 999-70-1
+nwdaf-cli get UE_MOBILITY --supi imsi-999700000000001
+```
+
+After editing the configuration, `sudo systemctl reload open5gs-nwdafd` applies the data-source, capability, window and prediction settings; the rest need a restart ([Configuration](#%EF%B8%8F-configuration)).
 
 ### Docker
 
-The image is a multi-stage build on `ubuntu:22.04` (OpenSSL 3.0, so TLS-capable) and contains only the daemon binary and default config.
-
 ```bash
 docker build -t open5gs-nwdaf .
-docker run --rm -p 7779:7779 open5gs-nwdaf
+docker run --rm --network host -v "$PWD/my-nwdaf.yaml:/etc/open5gs/nwdaf.yaml:ro" open5gs-nwdaf
 ```
 
-> To reach the SBI from outside the container, set `sbi_bind_address: "0.0.0.0"` in your config — the default `127.0.0.1` only listens inside the container. Mount your own config with `-v $(pwd)/config/nwdaf.yaml:/etc/open5gs/nwdaf.yaml`.
+The image (Ubuntu 22.04) has the daemon, the default configuration and the OpenAPI files. With the host network it reaches Open5GS's loopback endpoints; otherwise set `sbi_bind_address: "0.0.0.0"`, publish 7779 and 7780, and point the data sources at addresses the container can reach. In a container the NWDAF can't see the host's systemd, journald or `/proc`, so NF_LOAD has no CPU figures (it keeps the NRF status).
 
-### Install as a systemd service
+## 🔗 Open5GS compatibility
 
-```bash
-sudo cmake --install build
-sudo systemctl daemon-reload
-sudo systemctl enable --now open5gs-nwdafd
-```
+**Verified on Open5GS v2.8.0** (`ppa:open5gs/latest`), with UERANSIM UEs in [`demo/`](demo/). The 3GPP interfaces are the same whatever core the NWDAF runs beside; what the core can feed decides which analytics they serve. Open5GS v2.8.0 has no NF event-exposure services, so the inputs come from what it exposes for operations, an OAM-style input TS 23.288 allows.
 
-## 🔌 REST API (TS 29.520 SBI)
+**What each analytics needs, and where it comes from with Open5GS:**
 
-Base URL: `http://<host>:7779`
+| Analytics (3GPP interfaces) | Open5GS source | Configure |
+|---|---|---|
+| NF_LOAD | NF instance IDs and status from the NRF; CPU from `/proc` | `nrf_nf_discovery` (or `nf_instance_ids`) |
+| SLICE_LOAD_LEVEL, NSI_LOAD_LEVEL | UEs and PDU sessions per slice, from the AMF/SMF metrics | `slice_capacity` + `oam_metrics_endpoints` |
+| NETWORK_PERFORMANCE `NUM_OF_UE` | UE locations from the AMF's `/ue-info` (any area), or the AMF metrics (the whole served area) | `amf_ue_info_endpoint`, or `served_tai_list` + AMF metrics |
+| NETWORK_PERFORMANCE `SESS_SUCC_RATIO` | session setup counters from the SMF metrics | `served_tai_list` + SMF metrics |
+| UE_MOBILITY | UE locations from the AMF's `/ue-info` | `amf_ue_info_endpoint` |
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/nwdaf-analytics/v1/health` | Liveness probe (returns `UP` immediately). Also reports the transport profile, the metrics endpoints' scrape status (`oamSources`), which Rel-18 analytics are advertised, with the missing inputs for the rest (`rel18Analytics`), the source of each analytics input (`dataSources`), and the declared Open5GS version with the workarounds in force (`open5gs`). |
-| `GET` | `/nwdaf-analytics/v1/ready` | Readiness probe (`READY` once ML models are fitted, `503` otherwise) |
-| `GET` | `/nwdaf-analytics/v1/metrics` | Prometheus metrics |
-| `GET` | `/nwdaf-analytics/v1/openapi` | The published OpenAPI 3.0 contract (`application/yaml`) |
-| `GET` | `/nwdaf-analytics/v1/analytics?analyticsId=<ID>` | Fetch analytics (`Nnwdaf_AnalyticsInfo`) |
-| `POST` | `/nnwdaf-analyticsinfo/v1/analytics` | Analytics request with a JSON body (DNN / S-NSSAI filters). **Non-standard:** TS 29.520 defines this operation as a `GET` with query parameters (roadmap H1.7). |
-| `POST` | `/nwdaf-analytics/v1/subscriptions` | Create subscription (`Nnwdaf_EventsSubscription`) |
-| `GET` | `/nwdaf-analytics/v1/subscriptions` | List subscriptions |
-| `GET` | `/nwdaf-analytics/v1/subscriptions/{subId}` | Get subscription |
-| `DELETE` | `/nwdaf-analytics/v1/subscriptions/{subId}` | Delete subscription |
-| `POST` | `/nwdaf-analytics/v1/train` | Retrain the Isolation Forest on collected history |
+**Where the NWDAF must run.** The metrics, `/ue-info`, the NRF and MongoDB are reached over the network. systemd units, `/proc` (NF health and CPU) and journald (operator-API UE events) are local to the NFs' host, and `/sys/class/net/ogstun` (throughput) to the UPF's. On a single-host core, run the NWDAF on that host for everything; on a separate machine, set the NFs' `metrics: server: address` to a reachable IP. The Rel-18 analytics still work then, with NF_LOAD reporting NRF status only.
 
-**3GPP Rel-18 interfaces** (TS 29.520 V18.14.0; requests validated against the official OpenAPI; see [`docs/3gpp-rel18-compliance.md`](docs/3gpp-rel18-compliance.md)):
+**Workarounds.** Eight Open5GS behaviours are handled, each with an ID (`O5GS-01`…`O5GS-08`) tagged in the code and a dated interoperability record: the NRF's list format and its hidden NF discovery, heartbeat load the NRF discards, a session-success counter that counts twice, registered-UE counts only per subscribed slice, UPF counters that are compiled out, the non-standard per-UE JSON, and no event exposure or OAuth. They are listed in [`docs/3gpp-rel18-compliance.md`](docs/3gpp-rel18-compliance.md) §9.2. Set `open5gs_version` to your core's version: an unverified one is warned about at startup, and the nightly [interop job](.github/workflows/interop.yml) (`demo/interop-check.sh`) checks the workarounds against a live core.
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/nnwdaf-analyticsinfo/v1/analytics?event-id=…&tgt-ue=…` | `Nnwdaf_AnalyticsInfo`. `NF_LOAD`, when `nf_instance_ids` or `nrf_nf_discovery` is configured; `LOAD_LEVEL_INFORMATION` (slice load level) and `NSI_LOAD_LEVEL`, when `slice_capacity` is configured; `NETWORK_PERFORMANCE`, when `amf_ue_info_endpoint`, or `served_tai_list` with a metrics endpoint, is configured; `UE_MOBILITY`, when `amf_ue_info_endpoint` is configured. |
-| `POST` | `/nnwdaf-eventssubscription/v1/subscriptions` | `Nnwdaf_EventsSubscription` Subscribe. Returns `201` + `Location`. Reporting: PERIODIC, ONE_TIME, and THRESHOLD / ON_EVENT_DETECTION on `nfLoadLvlThds` (CPU), `loadLevelThreshold`, `nsiLevelThrds` and `nwPerfRequs` (interpretation I-10). |
+**What Open5GS v2.8.0 can't provide**, so these aren't offered on the 3GPP interfaces:
+- per-UE traffic (the UPF's counters are compiled out; PFCP reports only downlink volume per 100 MiB): UE_COMMUNICATION, DISPERSION by volume;
+- AF service data: SERVICE_EXPERIENCE;
+- SM congestion control: SM_CONGESTION;
+- OAuth 2.0 tokens: keep `oauth_enabled` off;
+- `nwdafInfo` in the NRF: consumers can't discover the NWDAF by analytics there.
+
+The operator API still serves its own forms of those analytics from the scraped data.
+
+## 📐 3GPP Release 18 compliance
+
+The frozen baseline is [`docs/frozen-standards.md`](docs/frozen-standards.md) (TS 23.288 V18.13.0, TS 29.520 V18.14.0, the official OpenAPI files at a pinned commit), and the tracker with every interpretation and its evidence is [`docs/3gpp-rel18-compliance.md`](docs/3gpp-rel18-compliance.md). Milestone **M1 passed** (2026-09-28): the NWDAF is **Release 18 compliant for the supported scope** in the `rel18` build profile (HTTP/2 + TLS). The claim covers the NWDAF's own interfaces: the Nnwdaf services, the NRF interaction and security. Which analytics they serve depends on the core's inputs ([above](#-open5gs-compatibility)).
+
+| Analytics ID | TS 23.288 | 3GPP interfaces (Rel-18 form) | Operator API |
+|---|---|---|---|
+| `NF_LOAD` | §6.5 | ✅ CPU and NRF status per NF instance; predictions | ✅ EWMA load |
+| `SLICE_LOAD_LEVEL` | §6.3 | ✅ occupancy of `slice_capacity` (I-9) | — |
+| `NSI_LOAD_LEVEL` | §6.3 | ✅ per S-NSSAI (I-9); predictions | — |
+| `NETWORK_PERFORMANCE` | §6.6 | ✅ `NUM_OF_UE`, `SESS_SUCC_RATIO` (I-11) | ✅ composite score |
+| `UE_MOBILITY` | §6.7.2 | ✅ TA and cell stays per SUPI (I-12) | ✅ from journald |
+| `UE_COMMUNICATION` | §6.7.3 | ⬜ no per-UE traffic | ✅ |
+| `ABNORMAL_BEHAVIOUR` | §6.7.5 | ⬜ | ✅ Isolation Forest |
+| `SERVICE_EXPERIENCE` | §6.4 | ⬜ no AF data | ✅ E-model MOS |
+| `QOS_SUSTAINABILITY` | §6.9 | ⬜ | ✅ trend |
+| `SM_CONGESTION` | §6.12 | ⬜ no SM congestion control | ✅ failure ratio |
+| `RED_TRANS_EXP` | §6.13 | ⬜ | ✅ rate stability |
+| `DISPERSION` | §6.10 | ⬜ | ✅ concentration |
+
+The 3GPP forms are advertised only when configured (`rel18Analytics` in `/health` says what is missing). `I-n` are the interpretations pinned in the compliance doc's Appendix A. The operator API's forms report what the scraped data can observe and name what they can't see in a `note`. IDs use the Rel-18 `NwdafEvent` spelling; the operator API also accepts `QoS_SUSTAINABILITY` and `REDUNDANT_TRANSMISSION`.
+
+## 🔌 API
+
+### 3GPP interfaces — HTTP/2, port 7780
+
+TS 29.520 V18.14.0; every request is validated against the official OpenAPI files.
+
+| Method | Path | Operation |
+|---|---|---|
+| `GET` | `/nnwdaf-analyticsinfo/v1/analytics?event-id=…&tgt-ue=…&event-filter=…&ana-req=…` | Nnwdaf_AnalyticsInfo. A future `startTs`/`endTs` in `ana-req` asks for a prediction. Slice load level is `event-id=LOAD_LEVEL_INFORMATION` |
+| `POST` | `/nnwdaf-eventssubscription/v1/subscriptions` | Subscribe: `201` + `Location`, with immediate reports when `immRep` is set |
 | `PUT` / `DELETE` | `/nnwdaf-eventssubscription/v1/subscriptions/{subscriptionId}` | Modify / Unsubscribe |
 
-These are served over **HTTP/2** on `sbi_h2_port` (default 7780): h2c with prior knowledge, or h2 over TLS. For example, `curl --http2-prior-knowledge "http://127.0.0.1:7780/nnwdaf-analyticsinfo/v1/analytics?event-id=NF_LOAD&tgt-ue=%7B%22anyUe%22%3Atrue%7D"`. Notifications are `NnwdafEventsSubscriptionNotification` bodies, sent over HTTP/2 with `3gpp-Sbi-Callback: Nnwdaf_EventsSubscription_Notify`. [`tools/nwdaf-cli`](#-test-tools) builds these queries for you.
-
-### Examples
+Served as h2c with prior knowledge, or h2 over TLS. Notifications are `NnwdafEventsSubscriptionNotification` bodies over HTTP/2 with `3gpp-Sbi-Callback: Nnwdaf_EventsSubscription_Notify`. The same resources are also answered over HTTP/1.1 on port 7779, for development. Query parameters are JSON-encoded, which [`nwdaf-cli`](#-tools) does for you:
 
 ```bash
-# NF load analytics
-curl "http://127.0.0.1:7779/nwdaf-analytics/v1/analytics?analyticsId=NF_LOAD"
+curl --http2-prior-knowledge "http://127.0.0.1:7780/nnwdaf-analyticsinfo/v1/analytics?event-id=NF_LOAD&tgt-ue=%7B%22anyUe%22%3Atrue%7D"
+```
 
-# Anomaly detection
+### Operator API — HTTP/1.1, port 7779
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/nwdaf-analytics/v1/health` | Liveness, plus the transport profile, metrics-source status (`oamSources`), the advertised Rel-18 analytics and what the rest lack (`rel18Analytics`), each input's source (`dataSources`) and the Open5GS workarounds (`open5gs`) |
+| `GET` | `/nwdaf-analytics/v1/ready` | Readiness (`READY` once the ML models are fitted, `503` before) |
+| `GET` | `/nwdaf-analytics/v1/metrics` | Prometheus metrics |
+| `GET` | `/nwdaf-analytics/v1/openapi` | This API's OpenAPI 3.0 contract |
+| `GET` | `/nwdaf-analytics/v1/analytics?analyticsId=<ID>` | One of the operator API's 10 analytics |
+| `POST` / `GET` | `/nwdaf-analytics/v1/subscriptions` | Create / list subscriptions (push to `notifUri`) |
+| `GET` / `DELETE` | `/nwdaf-analytics/v1/subscriptions/{subId}` | Get / delete a subscription |
+| `POST` | `/nwdaf-analytics/v1/train` | Retrain the Isolation Forest |
+| `POST` | `/nnwdaf-analyticsinfo/v1/analytics` | Deprecated JSON-body analytics request; non-standard (TS 29.520 defines a `GET`) |
+
+```bash
 curl "http://127.0.0.1:7779/nwdaf-analytics/v1/analytics?analyticsId=ABNORMAL_BEHAVIOUR"
-
-# Session-management congestion (TS 23.288 §6.12)
-curl "http://127.0.0.1:7779/nwdaf-analytics/v1/analytics?analyticsId=SM_CONGESTION"
-
-# Service experience — MOS with its G.107 impairment breakdown
-curl "http://127.0.0.1:7779/nwdaf-analytics/v1/analytics?analyticsId=SERVICE_EXPERIENCE"
-
-# Subscribe to events with push notifications
-curl -X POST "http://127.0.0.1:7779/nwdaf-analytics/v1/subscriptions" \
-  -H "Content-Type: application/json" \
-  -d '{"eventId": "NF_LOAD", "notificationUri": "http://consumer:8080/notify"}'
+curl -X POST "http://127.0.0.1:7779/nwdaf-analytics/v1/subscriptions" -H "Content-Type: application/json" \
+     -d '{"analyticsId": "NF_LOAD", "notifUri": "http://consumer:8080/notify"}'
 ```
 
-### 🧰 Test tools
+The operator API's contract is [`docs/openapi/nwdaf-analytics-v1.yaml`](docs/openapi/nwdaf-analytics-v1.yaml), also served at `/nwdaf-analytics/v1/openapi`; `tests/test_openapi_conformance.cpp` validates every live response against it. The 3GPP interfaces follow the official 3GPP OpenAPI files instead, which are authoritative.
 
-The tools in [`tools/`](tools/) exercise the 3GPP interfaces without a consumer NF, UEs or a core. The quickest start is one command from the repository root, after a build:
-
-```bash
-tools/nwdaf-local            # fake Open5GS data + notify sink + the NWDAF (config/nwdaf-local.yaml); Ctrl-C stops all
-tools/nwdaf-local --check    # the same, with smoke checks through nwdaf-cli (also run in CI)
-```
-
-`cmake --install` puts the three tools below in `/usr/local/bin`.
+## 🧰 Tools
 
 | Tool | What it does |
 |---|---|
-| `nwdaf-cli` | Nnwdaf_AnalyticsInfo and Nnwdaf_EventsSubscription from short options. It builds the JSON-encoded query parameters and subscription bodies and sends them over h2c. `nwdaf-cli health` shows what is advertised and why the rest isn't. Needs `curl` and `jq`. |
-| `nwdaf-notify-sink` | A notification consumer. It listens over h2c (Rel-18 notifications) and optionally HTTP/1.1 (`--http1-port`, operator-API ones), prints each notification and answers `204`. Built with `NWDAF_USE_HTTP2`. |
-| `nwdaf-fake-oam` | Synthetic Open5GS v2.8.0 AMF and SMF metrics (registered UEs and PDU sessions per slice, session setup counters) and the AMF's per-UE list (`/ue-info`, UEs moving between `--area` locations every `--move` seconds), changed at runtime with `curl '…/set?ues=8'`. Python 3, no packages. |
+| `build.sh` | Build, test and install in one command ([Installation](#-installation)) |
+| `tools/nwdaf-local` | Runs the NWDAF with synthetic Open5GS data and a notification sink (`config/nwdaf-local.yaml`); `--check` runs smoke checks, as CI does |
+| `nwdaf-cli` | A 3GPP consumer: builds the JSON-encoded queries and subscription bodies from short options and sends them over HTTP/2. `nwdaf-cli health` summarises `/health`. Needs `curl` and `jq` |
+| `nwdaf-notify-sink` | Prints the notifications it receives (h2c, and HTTP/1.1 with `--http1-port`) and answers `204` |
+| `nwdaf-fake-oam` | Synthetic Open5GS AMF/SMF metrics and `/ue-info`, with UEs moving between `--area` locations; change it live with `curl '…/set?ues=8'` |
 
 ```bash
-nwdaf-fake-oam --ues 4 --req-rate 2 --fail-ratio 0.25 &   # oam_metrics_endpoints: AMF …:9090/amf/metrics, SMF …:9090/smf/metrics
-nwdaf-notify-sink --port 9999 &
-
-nwdaf-cli health
-nwdaf-cli get NETWORK_PERFORMANCE --nw-perf NUM_OF_UE --nw-perf SESS_SUCC_RATIO --tai 999-70-1
+tools/nwdaf-local                       # Ctrl-C stops everything
 nwdaf-cli get SLICE_LOAD_LEVEL --any-slice
 nwdaf-cli subscribe SLICE_LOAD_LEVEL --snssai 1 --threshold 60 --notify http://127.0.0.1:9999/n
-curl 'http://127.0.0.1:9090/set?ues=9'                    # the sink prints the threshold report
-nwdaf-cli unsubscribe sub-…
+curl 'http://127.0.0.1:9090/set?ues=9'  # crosses 60 %: the sink prints the report
 ```
 
-`nwdaf-cli --help` lists every option. `-v` shows the encoded request.
+`cmake --install` puts `nwdaf-cli`, `nwdaf-notify-sink` and `nwdaf-fake-oam` in `/usr/local/bin`.
 
 ## ⚙️ Configuration
 
-Everything deployment-specific lives in [`config/nwdaf.yaml`](config/nwdaf.yaml).
+Everything deployment-specific is in [`config/nwdaf.yaml`](config/nwdaf.yaml), which explains each setting. **R** marks those `systemctl reload open5gs-nwdafd` (SIGHUP) applies; the others need a restart. When a reload changes the advertised analytics or served TAIs, the NWDAF sends the new profile to the NRF (NFUpdate). A file that fails to validate is refused and the running configuration kept.
 
-**Reloading.** `systemctl reload open5gs-nwdafd` (SIGHUP) applies, without a restart: `log_level`, `collection_interval_seconds`, `ewma_alpha`, `anomaly_contamination`, the data sources (`oam_metrics_endpoints`, `amf_ue_info_endpoint`), the capability settings (`slice_capacity`, `served_tai_list`, `nf_instance_ids`), the analytics windows and the `prediction_*` settings. When the advertised analytics or served TAIs change, the NWDAF sends the new profile to the NRF (NFUpdate) and logs the advertisement before and after. A file that fails to validate is refused and the running configuration kept. Every other setting needs a restart.
+**Identity and listeners**
 
-| Parameter | Default | Description |
-|---|---|---|
-| `nf_instance_id` | — | **Mandatory.** Stable UUID of this NF instance |
-| `plmn_mcc` / `plmn_mnc` | `999` / `70` | PLMN (test network default) |
-| `sbi_bind_address` / `sbi_port` | `127.0.0.1` / `7779` | Operator API and dashboard, over HTTP/1.1. Must not collide with Open5GS's 7777. |
-| `sbi_h2_port` | `7780` | The 3GPP interfaces over HTTP/2 (TS 29.500 §5.2). This is the endpoint registered with the NRF. `0` disables it. |
-| `nf_service_names` | `AMF→amfd`, … | Open5GS systemd unit suffix map |
-| `nf_instance_ids` | — | NF type → the NF's real `nfInstanceId`, for Rel-18 NF_LOAD on the 3GPP interfaces. Takes precedence over discovery. |
-| `nrf_nf_discovery` / `nrf_nf_discovery_interval_seconds` | `false` / `60` | Poll the NRF (NFListRetrieval and NFProfileRetrieval) every interval. This resolves the remaining NF instance IDs (a type is used only when exactly one instance is registered) and records each NF's NRF status for NF_LOAD `nfStatus`. NF_LOAD is advertised when this is on or `nf_instance_ids` is set. NFDiscover is not used: Open5GS NFs don't allow the NWDAF NF type, so the NRF hides them from it. |
-| `nrf_nf_status_window_seconds` | `3600` | Window over which NF_LOAD `nfStatus` is computed: the share of NRF polls that found each instance registered, undiscoverable or absent. |
-| `throughput_interfaces` | `ogstun` | UPF tunnel interfaces to sample |
-| `oam_metrics_endpoints` | _(empty)_ | NF type → Prometheus metrics URL of that NF, scraped every collection interval as OAM input (TS 28.552 measurement names, such as per-slice registered UEs and PDU sessions). The Open5GS v2.8.0 defaults are AMF `http://127.0.0.5:9090/metrics`, SMF `…127.0.0.4…`, UPF `…127.0.0.7…` and PCF `…127.0.0.13…`. Scrape status appears under `oamSources` in `/health`. |
-| `slice_capacity` | _(empty)_ | Per S-NSSAI admission capacity: `snssai` (`sst`, optional `sd`) with `max_ues` and/or `max_pdu_sessions`, as an NSACF would be configured. SLICE_LOAD_LEVEL and NSI_LOAD_LEVEL are served and advertised only for these slices. The load level is the higher of the UE and PDU-session occupancy in percent (interpretation I-9). `max_ues` needs `oam_metrics_endpoints.AMF`, `max_pdu_sessions` needs `.SMF`. |
-| `served_tai_list` | _(empty)_ | The tracking areas the core serves (`mcc`, `mnc` default to `plmn_mcc`/`plmn_mnc`; `tac` as an unquoted decimal number, as in Open5GS `amf.yaml`, or quoted 4 or 6 hex digits such as `"0003e8"`). Needed by NETWORK_PERFORMANCE from the metrics: Open5GS counts are per AMF and SMF, so those requests must cover this whole area (I-11). With `amf_ue_info_endpoint`, `NUM_OF_UE` is answered for any area of TAs or cells instead. |
-| `network_performance_window_seconds` | `300` | Period of the NETWORK_PERFORMANCE statistics when the consumer gives no `startTs`/`endTs`. |
-| `amf_ue_info_endpoint` | _(empty)_ | The AMF's per-UE list, polled every collection interval for UE locations (Open5GS v2.8.0: `http://127.0.0.5:9090/ue-info`, on its metrics server). UE_MOBILITY is served and advertised only when set (I-12). The list carries SUPIs and is served without authentication, so keep the metrics port internal. |
-| `ue_mobility_window_seconds` | `3600` | Period of the UE_MOBILITY statistics when the consumer gives no `startTs`/`endTs`. |
-| `ue_location_history_seconds` | `86400` | How long UE locations are kept, in memory only. |
-| `prediction_horizon_seconds` | `900` | How far ahead a predicted period (a future `startTs`/`endTs`) may end, for NF_LOAD and NSI_LOAD_LEVEL (I-13). `0` turns predictions off. |
-| `prediction_min_samples` | `10` | Fewer samples than this give a prediction with confidence 0, as TS 29.520 requires when data is insufficient. |
-| `open5gs_version` | `2.8.0` | The Open5GS version of the core. The workarounds for Open5GS behaviour were verified on 2.8.0; another version is logged as unverified at startup. |
-| `prediction_tolerance` | `10` | The error, in percentage points, still counted as a correct prediction: the confidence is the probability of staying within it. |
-| `slice_load_window_seconds` | `300` | Period of the slice load statistics when the consumer gives no `startTs`/`endTs`: the last N seconds. |
-| `collection_interval_seconds` | `10` | Collector cadence |
-| `supi_regex` | `imsi-(\d{15})` | SUPI extraction pattern (Open5GS v2.7.6) |
-| `mongodb_uri` / `mongodb_db` | `127.0.0.1:27017` / `open5gs` | Optional subscriber-count source |
-| `nrf_uri` | `http://127.0.0.10:7777` | NRF for registration + heartbeat |
-| `nrf_heartbeat_interval_seconds` | `60` | TS 29.510 heartbeat (`0` = disabled) |
-| `anomaly_contamination` | `0.10` | Expected anomaly fraction (Isolation Forest) |
-| `anomaly_seed` | `0` | Deterministic ML seed (`0` = random) |
-| `anomaly_min_samples` | `120` | Retrain quality gate (~20 min at 10 s interval) |
-| `baseline_stddev_min_kbps` | `0.5` | Idle-baseline guard against zero-traffic false positives |
-| `ewma_alpha` | `0.3` | EWMA smoothing factor |
-| `history_backend` / `history_db_path` | `sqlite` | Restart-safe history + subscription persistence |
-| `rate_limit_per_ip_rps` / `rate_limit_global_rps` | `10` / `100` | Token-bucket SBI rate limits (`0` = off) |
-| `network_performance_weights` | `0.6/0.2/0.2` | NF-health / DL / PDU weights (validated to sum to 1.0) |
-| `openapi_spec_path` | `/etc/open5gs/openapi/nwdaf-analytics-v1.yaml` | The operator-API contract served at `GET /nwdaf-analytics/v1/openapi` (404 when missing). |
-| `openapi_3gpp_dir` | `/etc/open5gs/openapi/3gpp` | The official 3GPP OpenAPI files the 3GPP interfaces validate requests against (`cmake --install` puts them here). When they can't be loaded, the 3GPP interfaces answer `500 SYSTEM_FAILURE` and the log says so; point this at another copy, such as `build/3gpp-openapi`, when running from a build. |
-| `oauth_enabled` + `oauth_nrf_public_key_file` / `oauth_shared_secret_file` | `false` | OAuth 2.0 access tokens on the 3GPP interfaces (TS 33.501 §13.4.1): signature, claims, scope and expiry are validated. The key is the NRF's public key (RS256/ES256) or a shared secret (HS256). **Keep it off with Open5GS**, which does not issue or send tokens. Needs a TLS build. |
-| `tls_enabled` + cert/key/CA paths | `false` | TLS on the SBI. Setting `tls_ca_file` enables mutual TLS: clients must present a certificate signed by that CA, and an unreadable CA stops startup. The NRF client verifies the NRF against the same CA, or against the system trust store if none is set. |
+| Parameter | Default | R | Description |
+|---|---|---|---|
+| `nf_instance_id` | — | | **Mandatory.** This NWDAF's NF instance ID (UUID); keep it stable |
+| `plmn_mcc` / `plmn_mnc` | `999` / `70` | | The core's PLMN |
+| `open5gs_version` | `2.8.0` | | The core's Open5GS version; another than the verified 2.8.0 is warned about |
+| `sbi_bind_address` | `127.0.0.1` | | Address both listeners bind to |
+| `sbi_port` | `7779` | | Operator API and dashboard, HTTP/1.1 (not 7777: Open5GS uses it) |
+| `sbi_h2_port` | `7780` | | The 3GPP interfaces over HTTP/2, registered with the NRF. `0` = off: HTTP/1.1 only, not Rel-18 compliant |
+
+**NRF**
+
+| Parameter | Default | R | Description |
+|---|---|---|---|
+| `nrf_uri` | `http://127.0.0.10:7777` | | The NRF (Open5GS's needs HTTP/2) |
+| `nrf_register_on_startup` | `true` | | NFRegister at start, NFDeregister at stop |
+| `nrf_heartbeat_interval_seconds` | `60` | | Heartbeat period, unless the NRF assigns one; `0` = none |
+| `nrf_nf_discovery` | `false` | | Poll the NRF (NFListRetrieval, NFProfileRetrieval) for NF instance IDs, where exactly one instance of a type is registered, and NF status. Enables NF_LOAD |
+| `nrf_nf_discovery_interval_seconds` | `60` | | Poll period |
+| `nrf_nf_status_window_seconds` | `3600` | | Period the NF_LOAD `nfStatus` percentages cover |
+
+**Data sources**
+
+| Parameter | Default | R | Description |
+|---|---|---|---|
+| `oam_metrics_endpoints` | — | R | NF type → its Prometheus metrics URL (Open5GS v2.8.0: AMF `http://127.0.0.5:9090/metrics`, SMF `…127.0.0.4…`, UPF `…127.0.0.7…`, PCF `…127.0.0.13…`) |
+| `amf_ue_info_endpoint` | — | R | The AMF's per-UE list (`http://127.0.0.5:9090/ue-info`): UE locations. It lists SUPIs without authentication, so keep the metrics port internal |
+| `nf_service_names` | `AMF→amfd`, … | | NF type → systemd unit suffix (`open5gs-<name>`), for NF health and CPU |
+| `throughput_interfaces` | `ogstun` | | UPF tunnel interfaces whose `/sys` counters give throughput |
+| `collection_interval_seconds` | `10` | R | Sampling period of every source |
+| `throughput_history_size` | `360` | | Samples kept per series |
+| `amf_journal_lines` / `smf_journal_lines` | `500` | | journald lines read per tick |
+| `supi_regex` | `imsi-(\d{15})` | | Extracts the SUPI from Open5GS log lines |
+| `mongodb_uri` / `mongodb_db` | `mongodb://127.0.0.1:27017` / `open5gs` | | Subscriber database (operator-API subscriber count) |
+
+**Rel-18 analytics capability**
+
+| Parameter | Default | R | Description |
+|---|---|---|---|
+| `nf_instance_ids` | — | R | NF type → its NRF `nfInstanceId`; enables NF_LOAD without NRF polling, and wins over it |
+| `slice_capacity` | — | R | Per S-NSSAI (`snssai: {sst, sd}`) `max_ues` and/or `max_pdu_sessions`, as an NSACF would hold them. Slice and NSI load level are the higher occupancy in percent (I-9); `max_ues` needs the AMF metrics, `max_pdu_sessions` the SMF's |
+| `served_tai_list` | — | R | The TAIs the core serves (amf.yaml `tai`): `{tac}` with optional `mcc`/`mnc`; an unquoted `tac` is decimal, a quoted 4- or 6-digit one hex. The metrics-based NETWORK_PERFORMANCE types describe this whole area (I-11) |
+| `slice_load_window_seconds` | `300` | R | Slice and NSI load statistics period when a request gives none |
+| `network_performance_window_seconds` | `300` | R | NETWORK_PERFORMANCE statistics period when a request gives none |
+| `ue_mobility_window_seconds` | `3600` | R | UE_MOBILITY statistics period when a request gives none |
+| `ue_location_history_seconds` | `86400` | | How long UE locations are kept, in memory only |
+| `prediction_horizon_seconds` | `900` | R | How far ahead a predicted period may end (I-13); `0` = no predictions |
+| `prediction_min_samples` | `10` | R | Fewer samples give a prediction with confidence 0 |
+| `prediction_tolerance` | `10` | R | Error, in percentage points, a prediction's confidence counts as correct |
+
+**ML (operator API)**
+
+| Parameter | Default | R | Description |
+|---|---|---|---|
+| `model_dir` | `/opt/nwdaf/models` | | Where the anomaly model is saved |
+| `anomaly_contamination` | `0.10` | R | Expected share of anomalies (Isolation Forest) |
+| `anomaly_seed` | `0` | | Model seed; `0` = random |
+| `anomaly_min_samples` | `120` | | Samples needed before training |
+| `baseline_stddev_min_kbps` | `0.5` | | Below this throughput spread, ABNORMAL_BEHAVIOUR reports `BASELINE_TOO_LOW` |
+| `ewma_alpha` | `0.3` | R | EWMA smoothing, also the forecaster's level smoothing |
+| `network_performance_weights` | `0.6` / `0.2` / `0.2` | | Operator-API network performance score weights (NF health, downlink, PDU sessions), summing to 1.0 |
+
+**Logging, persistence, security and API documents**
+
+| Parameter | Default | R | Description |
+|---|---|---|---|
+| `log_level` | `info` | R | `trace`, `debug`, `info`, `warn` or `error` |
+| `log_file` | `/var/log/open5gs/nwdaf.log` | | Log file, besides the console |
+| `history_backend` / `history_db_path` | `sqlite` / `/opt/nwdaf/history.db` | | `sqlite` keeps history and subscriptions across restarts; `none` = memory only |
+| `tls_enabled` + `tls_cert_file` / `tls_key_file` | `false` | | TLS on both listeners (a TLS build) |
+| `tls_ca_file` | — | | When set: mutual TLS, clients need a certificate from this CA; the NRF is verified against it too |
+| `oauth_enabled` + `oauth_nrf_public_key_file` / `oauth_shared_secret_file` | `false` | | OAuth 2.0 access tokens on the 3GPP interfaces (TS 33.501 §13.4.1), checked against the NRF's public key (RS256/ES256) or a shared secret (HS256). Keep it off with Open5GS |
+| `rate_limit_per_ip_rps` / `rate_limit_global_rps` | `10` / `100` | | Request rate limits; `0` = none |
+| `openapi_spec_path` | `/etc/open5gs/openapi/nwdaf-analytics-v1.yaml` | | The operator-API contract served at `/openapi` |
+| `openapi_3gpp_dir` | `/etc/open5gs/openapi/3gpp` | | The official 3GPP OpenAPI files requests are validated against; without them the 3GPP interfaces answer `500` (from a build tree: `build/3gpp-openapi`) |
 
 ### Build options
 
 | CMake option | Default | Description |
 |---|---|---|
-| `NWDAF_USE_SD_JOURNAL` | `ON` | journald collection via libsystemd |
-| `NWDAF_USE_TLS` | `ON` | TLS on SBI (OpenSSL) |
-| `NWDAF_USE_HTTP2` | `ON` | HTTP/2 for the 3GPP interfaces and the NRF (nghttp2, libcurl). `OFF` gives the `dev-legacy` profile, which is HTTP/1.1 only and transport non-compliant; the Open5GS NRF also rejects HTTP/1.1. |
-| `NWDAF_REQUIRE_REL18_PROFILE` | `OFF` | Fail the configure unless HTTP/2 and TLS are both enabled |
-| `NWDAF_ENABLE_PUSH_DELIVERY` | `ON` | Subscription push-notification thread |
-| `NWDAF_BUILD_TESTS` | `ON` | Catch2 unit + integration tests |
+| `NWDAF_USE_HTTP2` | `ON` | HTTP/2 for the 3GPP interfaces and the NRF (nghttp2, libcurl). `OFF`: HTTP/1.1 only, not Rel-18 compliant, and the Open5GS NRF refuses it |
+| `NWDAF_USE_TLS` | `ON` | TLS (OpenSSL ≥ 3.0) and OAuth 2.0 |
+| `NWDAF_REQUIRE_REL18_PROFILE` | `OFF` | Fail the configure unless HTTP/2 and TLS are both on (`build.sh` sets it for `rel18`) |
+| `NWDAF_USE_SD_JOURNAL` | `ON` | journald collection and `sd_notify` |
+| `NWDAF_ENABLE_PUSH_DELIVERY` | `ON` | Subscription notifications |
+| `NWDAF_BUILD_TESTS` | `ON` | The Catch2 tests |
+| `NWDAF_3GPP_OPENAPI_SOURCE_DIR` | — | An offline copy of the 3GPP OpenAPI files (hash-checked) |
 
-Optional dependencies degrade gracefully: no MongoDB driver → subscriber count returns 0; no SQLite → in-memory history only.
+Without SQLite, history stays in memory; without a MongoDB driver or `mongosh`, the subscriber count is 0.
 
-> **TLS note:** `NWDAF_USE_TLS=ON` requires **OpenSSL ≥ 3.0** (Ubuntu 22.04+). On Ubuntu 20.04 (OpenSSL 1.1.1), build with `-DNWDAF_USE_TLS=OFF`; sd-journal and SQLite are unaffected.
+## 📊 Dashboard & observability
 
-## 📊 Dashboard & Observability
+- **Web UI** ([`dashboard/`](dashboard/)): a React + Recharts single-page app (throughput, NF health, anomalies, QoS, MOS, network performance score, subscriptions, a traffic simulator), served by nginx with `/nwdaf-analytics/` proxied to port 7779. It shows the operator API's analytics.
+- **Grafana** ([`grafana/nwdaf_dashboard.json`](grafana/nwdaf_dashboard.json)): an import-ready dashboard on the Prometheus `/metrics` endpoint.
 
-- **NWDAF Intelligence web UI** ([`dashboard/`](dashboard/)) — React + Recharts single-page app with live throughput, NF health, anomaly detection, QoS sustainability, MOS/service experience, network performance scoring, subscription management, a traffic simulator, and light/dark themes.
-- **Grafana** ([`grafana/nwdaf_dashboard.json`](grafana/nwdaf_dashboard.json)) — import-ready dashboard fed by the Prometheus `/metrics` endpoint.
+## 🧠 ML internals
 
-## 🧠 ML Internals
-
-| Model | Purpose | Implementation |
+| Model | Used by | Implementation |
 |---|---|---|
-| **Isolation Forest** | `ABNORMAL_BEHAVIOUR` — flags throughput/behaviour outliers | Native C++ (~300 LoC), configurable contamination & seed, quality-gated retraining, atomic write-then-rename model persistence |
-| **EWMA Predictor** | `NF_LOAD` — short-horizon load forecasting | Exponentially weighted moving average with configurable α |
-| **E-model MOS estimator** | `SERVICE_EXPERIENCE` — mean opinion score | ITU-T G.107 transmission rating: `R = R0 − Id − Ie_eff`, with a Weber-Fechner throughput term, G.107 packet-loss weighting and the `Idd` delay curve. Reports the R-factor and a per-impairment breakdown; falls back to the legacy step ladder when no throughput sample is available |
+| Isolation Forest | `ABNORMAL_BEHAVIOUR` (operator API) | Native C++, configurable contamination and seed, quality-gated retraining, atomic model persistence |
+| EWMA predictor | `NF_LOAD` (operator API) | Exponentially weighted moving average, configurable α |
+| Holt linear-trend forecaster | NF_LOAD and NSI_LOAD_LEVEL predictions (3GPP) | Level and trend smoothing; the confidence is the probability of an error within `prediction_tolerance` (I-13) |
+| E-model MOS estimator | `SERVICE_EXPERIENCE` (operator API) | ITU-T G.107: `R = R0 − Id − Ie_eff` with throughput, packet-loss and delay terms, and a per-impairment breakdown |
 
-No Python runtime, no external ML framework — the entire inference path is in-process C++, which keeps the footprint small enough for edge and lab deployments.
+No Python runtime and no external ML framework: inference runs in the daemon.
 
 ## 🧪 Testing
 
-271 Catch2 test cases across 18 suites, including a **mock Open5GS environment** so the full pipeline can be tested without a running core. The main ones:
-
 ```bash
-cmake -S . -B build -DNWDAF_BUILD_TESTS=ON
-cmake --build build --parallel
-cd build && ctest --output-on-failure
+./build.sh --tests                       # or: cd build && ctest --output-on-failure
+./build/tests/nwdaf_tests "H1.4:*"       # one group, by Catch2 name filter
 ```
 
-| Suite | Covers |
+306 Catch2 test cases in two binaries: `nwdaf_tests` (unit, parallel) and `nwdaf_integration_tests` (a real server on port 17779, HTTP/2 included). A mock Open5GS collector and a mock NRF stand in for the core.
+
+| Suites | Cover |
 |---|---|
-| `test_collector` | Data collection, parsing, interface stats |
-| `test_analytics` | The original 7 analytics IDs, ML outputs, edge cases |
-| `test_h1_analytics` | E-model MOS calibration and the `SM_CONGESTION` / `RED_TRANS_EXP` / `DISPERSION` analytics |
-| `test_server_integration` | SBI endpoints, subscriptions, auth, rate limiting |
-| `test_arch_improvements` | Persistence, TLS config, weights validation |
-| `test_openapi_conformance` | Every endpoint validated against the published OpenAPI schemas |
-| `test_3gpp_sbi` | The Rel-18 Nnwdaf interfaces over HTTP/2: requests, failure semantics, subscriptions, notifications |
-| `test_slice_load`, `test_network_performance`, `test_threshold_reporting` | SLICE_LOAD_LEVEL / NSI_LOAD_LEVEL (I-9), NETWORK_PERFORMANCE (I-11), THRESHOLD reporting (I-10), against the official schemas |
-| `test_nrf_client`, `test_sbi_security`, `test_oauth` | NRF lifecycle against a mock NRF, mTLS, OAuth 2.0 token validation |
+| `test_3gpp_sbi`, `test_schema_validator`, `test_supported_features` | The Rel-18 interfaces over HTTP/2: official-schema validation, failure semantics, features, subscriptions, notifications |
+| `test_slice_load`, `test_network_performance`, `test_ue_mobility`, `test_predictions`, `test_threshold_reporting` | The Rel-18 analytics (I-9 to I-13), against the official schemas |
+| `test_nrf_client`, `test_sbi_security`, `test_oauth` | NRF lifecycle, mTLS, OAuth 2.0 |
+| `test_compat`, `test_config_reload`, `test_analytics_catalogue`, `test_compliance_doc` | Inputs and advertisement, the Open5GS workarounds, reload, the compliance tracker's evidence |
+| `test_collector`, `test_oam_metrics`, `test_analytics`, `test_h1_analytics`, `test_server_integration`, `test_openapi_conformance`, `test_arch_improvements` | Collection, the operator API and its contract, persistence |
+
+CI ([`ci.yml`](.github/workflows/ci.yml)) builds and tests on Ubuntu 22.04 and 20.04, runs `tools/nwdaf-local --check`, and builds the Docker image. The [interop job](.github/workflows/interop.yml) runs nightly against a live Open5GS core with UERANSIM UEs.
 
 ## 🗺 Roadmap
 
-Tracked against [`docs/ENHANCEMENT_PLAN_5G_6G.md`](docs/ENHANCEMENT_PLAN_5G_6G.md)
-and the [5G/6G enhancement plan project board](https://github.com/users/cem8kaya/projects/5).
+Tracked in [`docs/ENHANCEMENT_PLAN_5G_6G.md`](docs/ENHANCEMENT_PLAN_5G_6G.md) and on the [project board](https://github.com/users/cem8kaya/projects/5).
 
 **Horizon 1 — Rel-17/18 completeness & data-path realism** ([#20](https://github.com/cem8kaya/open5gs-nwdaf/issues/20))
 
-- [x] `DISPERSION`, `SM_CONGESTION`, `RED_TRANS_EXP` analytics ([#26](https://github.com/cem8kaya/open5gs-nwdaf/issues/26), partial)
-- [x] MOS / service-experience E-model upgrade ([#27](https://github.com/cem8kaya/open5gs-nwdaf/issues/27))
-- [x] OpenAPI 3.0 spec published + CI conformance test ([#28](https://github.com/cem8kaya/open5gs-nwdaf/issues/28))
-- [x] H1.7 — 3GPP Nnwdaf SBI conformance (Rel-18 resources, data types, failure semantics, supported features, PERIODIC / ONE_TIME / THRESHOLD reporting; NF_LOAD, SLICE_LOAD_LEVEL, NSI_LOAD_LEVEL)
-- [x] H1.8 — HTTP/2 SBI transport + compliance profile
-- [x] H1.9 — Truthful Rel-18 NRF profile, lifecycle, and NF instance IDs / NF status from the NRF
-- [x] H1.10 — SBI security: mTLS, OAuth2 access-token validation, NRF client TLS
-- [x] **M1 — Rel-18 supported-scope compliance gate** (passed 2026-09-28). See [`docs/3gpp-rel18-compliance.md`](docs/3gpp-rel18-compliance.md)
-- [ ] Pluggable `IDataSource` ingestion — SBI / OAM backend ([#23](https://github.com/cem8kaya/open5gs-nwdaf/issues/23); partial: OAM input from the NFs' metrics endpoints)
-- [ ] Slice awareness (S-NSSAI) + `SLICE_LOAD_LEVEL` (TS 23.288 §6.3) ([#24](https://github.com/cem8kaya/open5gs-nwdaf/issues/24); partial: SLICE_LOAD_LEVEL / NSI_LOAD_LEVEL served, per-slice anomaly models open)
-- [ ] PFCP usage reporting → per-UE / per-session analytics ([#25](https://github.com/cem8kaya/open5gs-nwdaf/issues/25); on hold, see the enhancement plan)
-- [ ] `DN_PERFORMANCE` (§6.14) and `USER_DATA_CONGESTION` (§6.8) — both blocked on the above input paths
+- [x] H1.7–H1.10 — Rel-18 Nnwdaf interfaces, HTTP/2, NRF lifecycle, mTLS and OAuth2; **M1** passed 2026-09-28
+- [x] Rel-18 analytics: NF_LOAD, SLICE_LOAD_LEVEL, NSI_LOAD_LEVEL, NETWORK_PERFORMANCE, UE_MOBILITY; THRESHOLD reporting; predictions
+- [x] Open5GS data sources: metrics (OAM input) and the per-UE list; inputs-based advertisement; registered workarounds and a nightly interop check
+- [x] `DISPERSION`, `SM_CONGESTION`, `RED_TRANS_EXP`, the E-model MOS and the operator API's OpenAPI contract ([#26](https://github.com/cem8kaya/open5gs-nwdaf/issues/26)–[#28](https://github.com/cem8kaya/open5gs-nwdaf/issues/28))
+- [ ] A standard data-source backend (Nnf_EventExposure, TS 28.532 OAM) for other cores ([#23](https://github.com/cem8kaya/open5gs-nwdaf/issues/23))
+- [ ] Per-slice anomaly models ([#24](https://github.com/cem8kaya/open5gs-nwdaf/issues/24))
+- [ ] Per-UE / per-session data via PFCP usage reporting ([#25](https://github.com/cem8kaya/open5gs-nwdaf/issues/25); on hold: Open5GS reports downlink volume per 100 MiB only)
+- [ ] `DN_PERFORMANCE`, `USER_DATA_CONGESTION` — blocked on per-UE and AF inputs
 
-**Horizon 2 — Data & ML platform maturity** ([#21](https://github.com/cem8kaya/open5gs-nwdaf/issues/21))
+**Horizon 2 — Data & ML platform maturity** ([#21](https://github.com/cem8kaya/open5gs-nwdaf/issues/21)): MTLF/AnLF split, model registry, drift detection, seasonal forecasting (Holt-Winters), ADRF / data lake, evaluation harness with calibrated confidence, anomaly attribution ([#29](https://github.com/cem8kaya/open5gs-nwdaf/issues/29)–[#35](https://github.com/cem8kaya/open5gs-nwdaf/issues/35)).
 
-- [ ] MTLF / AnLF split (Rel-17 §5.1) ([#29](https://github.com/cem8kaya/open5gs-nwdaf/issues/29))
-- [ ] Model registry, versioning and rollback ([#30](https://github.com/cem8kaya/open5gs-nwdaf/issues/30))
-- [ ] Drift detection + auto-retrain ([#31](https://github.com/cem8kaya/open5gs-nwdaf/issues/31))
-- [ ] Seasonality-aware forecasting — Holt-Winters / ONNX ([#32](https://github.com/cem8kaya/open5gs-nwdaf/issues/32))
-- [ ] ADRF + data lake / feature store, Parquet export ([#33](https://github.com/cem8kaya/open5gs-nwdaf/issues/33))
-- [ ] Evaluation harness + calibrated confidence ([#34](https://github.com/cem8kaya/open5gs-nwdaf/issues/34))
-- [ ] Per-feature anomaly attribution ([#35](https://github.com/cem8kaya/open5gs-nwdaf/issues/35))
-
-**Horizon 3 — 5G-Advanced → 6G readiness** ([#22](https://github.com/cem8kaya/open5gs-nwdaf/issues/22))
-
-- [ ] Closed-loop automation & intent layer ([#36](https://github.com/cem8kaya/open5gs-nwdaf/issues/36))
-- [ ] Energy efficiency & sustainability analytics ([#37](https://github.com/cem8kaya/open5gs-nwdaf/issues/37))
-- [ ] AI-native / federated learning coordinator ([#38](https://github.com/cem8kaya/open5gs-nwdaf/issues/38))
-- [ ] Network digital twin ([#39](https://github.com/cem8kaya/open5gs-nwdaf/issues/39))
-- [ ] ISAC data types ([#40](https://github.com/cem8kaya/open5gs-nwdaf/issues/40))
-- [ ] Kubernetes Helm chart + horizontal scaling ([#41](https://github.com/cem8kaya/open5gs-nwdaf/issues/41))
-
-**Unscheduled**
-
-- [ ] srsRAN / UERANSIM end-to-end CI pipeline
+**Horizon 3 — 5G-Advanced → 6G readiness** ([#22](https://github.com/cem8kaya/open5gs-nwdaf/issues/22)): closed-loop automation and intent, energy-efficiency analytics, federated learning, network digital twin, ISAC data types, Helm and horizontal scaling ([#36](https://github.com/cem8kaya/open5gs-nwdaf/issues/36)–[#41](https://github.com/cem8kaya/open5gs-nwdaf/issues/41)).
 
 ## 🤝 Contributing
 
 Contributions are very welcome — this project aims to become the reference open-source NWDAF for the Open5GS ecosystem.
 
 1. Fork the repo and create a feature branch
-2. Build with tests: `cmake -S . -B build -DNWDAF_BUILD_TESTS=ON`
+2. Build with tests: `./build.sh --tests`
 3. Make sure `ctest` passes and the build stays warning-clean (`-Wall -Wextra -Werror`)
 4. Open a PR with a clear description; reference the relevant 3GPP clause when touching spec-defined behaviour
 

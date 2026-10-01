@@ -753,104 +753,85 @@ curl 'http://127.0.0.1:9090/set?ues=9'     # crosses 60 %: the sink prints the r
 
 ## 12. Deploy to Open5GS Node
 
-Once you are satisfied with local testing, deploy to a machine running Open5GS.
+Once you are satisfied with local testing, deploy to the machine running
+Open5GS (v2.8.0 is the verified version). The README's **Installation** and
+**Open5GS compatibility** sections are the reference; this is the short path.
 
-### 12.1 Build for production
-
-```bash
-mkdir -p build-release && cd build-release
-
-cmake .. \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DNWDAF_USE_SD_JOURNAL=ON \
-    -DNWDAF_BUILD_TESTS=OFF
-
-make -j$(nproc)
-```
-
-### 12.2 Install
+### 12.1 Build and install
 
 ```bash
-# Copy binary
-sudo cp build-release/open5gs-nwdafd /usr/local/bin/
-sudo chmod 755 /usr/local/bin/open5gs-nwdafd
-
-# Install config
-sudo mkdir -p /etc/open5gs
-sudo cp config/nwdaf.yaml /etc/open5gs/nwdaf.yaml
-
-# Create model and log directories
-sudo mkdir -p /opt/nwdaf/models
-sudo mkdir -p /var/log/open5gs
-sudo chown -R $(whoami):$(whoami) /opt/nwdaf
-
-# Install systemd service
-sudo cp systemd/open5gs-nwdafd.service /etc/systemd/system/
-sudo systemctl daemon-reload
+./build.sh --deps --install        # the Rel-18 profile (HTTP/2 + TLS); Ubuntu 20.04: --profile full
 ```
 
-> **Type=notify**: The unit file uses `Type=notify` with `WatchdogSec=30` and
-> expects the daemon to call `sd_notify(READY=1)`. This path is only compiled
-> in when `-DNWDAF_USE_SD_JOURNAL=ON` (see `src/main.cpp:117`). If you build
-> without sd-journal support and drop the binary behind this unit, systemd
-> will time out the startup — either flip the build option back on or edit
-> the unit to `Type=simple` and remove `WatchdogSec`.
+This installs the daemon and tools to `/usr/local/bin`, the configuration to
+`/etc/open5gs/nwdaf.yaml`, the OpenAPI files to `/etc/open5gs/openapi/` and the
+systemd unit. The unit runs as the Open5GS packages' `open5gs` user and may
+write only to `/opt/nwdaf` and `/var/log/open5gs`, so `build.sh` creates
+`/opt/nwdaf`, hands it to that user, and adds the user to `systemd-journal` to
+read the NFs' journals.
 
-### 12.3 Adapt `nwdaf.yaml` for your Open5GS deployment
+> **Type=notify**: the unit expects `sd_notify(READY=1)`, which is only built
+> with `NWDAF_USE_SD_JOURNAL=ON` (the `rel18` and `full` profiles). With the
+> `minimal` profile, change the unit to `Type=simple`.
 
-Edit `/etc/open5gs/nwdaf.yaml`:
+### 12.2 Check the Open5GS data sources
+
+Open5GS serves its metrics, and the AMF's per-UE list, from the `metrics:`
+block of each NF's YAML, on loopback by default:
+
+```bash
+curl -s http://127.0.0.5:9090/metrics | grep registeredsubnbr     # AMF (once UEs register)
+curl -s http://127.0.0.4:9090/metrics | grep pdusessioncreation    # SMF
+curl -s http://127.0.0.5:9090/ue-info | jq .pager                  # AMF per-UE list
+```
+
+### 12.3 Adapt `nwdaf.yaml`
+
+Edit `/etc/open5gs/nwdaf.yaml`; each setting is explained in the file:
 
 ```yaml
 nwdaf:
-  plmn_mcc: "999"      # ← your PLMN
+  nf_instance_id: "<uuidgen output>"    # once, and keep it
+  plmn_mcc: "999"                       # amf.yaml plmn_id
   plmn_mnc: "70"
-
-  # Adjust to your kernel interface names
-  throughput_interfaces:
-    - "ogstun"
-    - "ens4"        # or eth0, ens3, etc.
-
-  # Adjust MongoDB if using a non-default setup
-  mongodb_uri: "mongodb://127.0.0.1:27017"
-  mongodb_db:  "open5gs"
-
-  nrf_uri: "http://127.0.0.1:7777"
-  nrf_register_on_startup: true
-
-  log_level: "info"
-  log_file: "/var/log/open5gs/nwdaf.log"
+  nrf_uri: "http://127.0.0.10:7777"     # the Open5GS NRF (not 127.0.0.1)
+  nrf_nf_discovery: true                # NF_LOAD
+  oam_metrics_endpoints:
+    AMF: "http://127.0.0.5:9090/metrics"
+    SMF: "http://127.0.0.4:9090/metrics"
+  amf_ue_info_endpoint: "http://127.0.0.5:9090/ue-info"   # UE_MOBILITY, NUM_OF_UE
+  served_tai_list:                      # amf.yaml tai list
+    - {tac: 1}
+  slice_capacity:                       # your admission maxima → slice load level
+    - snssai: {sst: 1}
+      max_ues: 1000
+      max_pdu_sessions: 2000
 ```
 
-### 12.4 Start and enable the service
+### 12.4 Start and verify
 
 ```bash
-sudo systemctl enable open5gs-nwdafd
-sudo systemctl start  open5gs-nwdafd
-
-# Verify
-sudo systemctl status open5gs-nwdafd
-
-# Health check
-curl http://localhost:7779/nwdaf-analytics/v1/health
+sudo systemctl enable --now open5gs-nwdafd
+nwdaf-cli health        # sources up, advertised analytics, what the rest lack, open5gs.verified
 ```
+
+After editing the file, `sudo systemctl reload open5gs-nwdafd` applies the
+data-source, capability, window and prediction settings without a restart.
 
 ### 12.5 View logs
 
 ```bash
-# Journald (recommended)
 sudo journalctl -u open5gs-nwdafd -f
-
-# Log file
 tail -f /var/log/open5gs/nwdaf.log
 ```
 
 ### 12.6 NRF registration
 
-The NWDAF registers itself with the NRF on startup (if `nrf_register_on_startup: true`).
-Verify the registration:
+The NWDAF registers with the NRF at startup (`nrf_register_on_startup: true`).
+The Open5GS NRF speaks HTTP/2 only:
 
 ```bash
-curl http://127.0.0.1:7777/nnrf-nfm/v1/nf-instances | python3 -m json.tool | grep -A5 NWDAF
+curl -s --http2-prior-knowledge "http://127.0.0.10:7777/nnrf-nfm/v1/nf-instances?nf-type=NWDAF" | jq
 ```
 
 ---
