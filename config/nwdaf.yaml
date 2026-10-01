@@ -1,23 +1,31 @@
-# Open5GS NWDAF configuration. `systemctl reload open5gs-nwdafd` (SIGHUP)
-# applies the logging, cadence, data-source, capability (slice_capacity,
-# served_tai_list, nf_instance_ids), window and prediction settings; the rest
-# needs a restart (README, Configuration).
+# Open5GS NWDAF configuration (/etc/open5gs/nwdaf.yaml).
+#
+# [R] marks the settings `systemctl reload open5gs-nwdafd` (SIGHUP) applies;
+# every other setting needs a restart. Commented-out settings show their
+# default or an example. The README's Configuration table has the details.
 nwdaf:
-  # COMPAT-02: the Open5GS version of the core; the NWDAF's workarounds were
-  # verified on 2.8.0, and another version is warned about at startup.
-  # open5gs_version: "2.8.0"
 
-  # NF identity
-  nf_instance_id: "198e9234-b849-42a2-9f70-d9a587616c2b"  # stable — do not regenerate
-  plmn_mcc: "999"
+  # ── Identity ──────────────────────────────────────────────────────────────
+  nf_instance_id: "198e9234-b849-42a2-9f70-d9a587616c2b"  # this NWDAF's NF instance ID (UUID, kept stable)
+  plmn_mcc: "999"                       # PLMN of the core (amf.yaml plmn_id)
   plmn_mnc: "70"
-  sbi_bind_address: "127.0.0.1"
-  sbi_port: 7779              # Operator API + dashboard (HTTP/1.1). Must not conflict with Open5GS (7777)
-  sbi_h2_port: 7780           # 3GPP interfaces over HTTP/2 (TS 29.500); 0 disables
+  # open5gs_version: "2.8.0"            # the core's Open5GS version (workarounds verified on 2.8.0)
 
-  # Open5GS NF service names (systemd unit suffix after 'open5gs-')
-  # Adjust for your Open5GS version if needed
-  nf_service_names:
+  # ── SBI listeners ─────────────────────────────────────────────────────────
+  sbi_bind_address: "127.0.0.1"         # address both listeners bind to
+  sbi_port: 7779                        # operator API and dashboard, HTTP/1.1 (not 7777: Open5GS uses it)
+  sbi_h2_port: 7780                     # 3GPP Nnwdaf interfaces over HTTP/2; 0 = off (dev-legacy, non-compliant)
+
+  # ── NRF (TS 29.510) ───────────────────────────────────────────────────────
+  nrf_uri: "http://127.0.0.10:7777"     # the NRF (Open5GS default address; it needs HTTP/2)
+  nrf_register_on_startup: true         # NFRegister at start, NFDeregister at stop
+  nrf_heartbeat_interval_seconds: 60    # heartbeat period (the NRF may assign another); 0 = no heartbeat
+  nrf_nf_discovery: false               # poll the NRF for NF instance IDs and status (enables NF_LOAD)
+  nrf_nf_discovery_interval_seconds: 60 # how often it polls
+  nrf_nf_status_window_seconds: 3600    # period NF_LOAD nfStatus percentages cover
+
+  # ── Data sources (Open5GS) ────────────────────────────────────────────────
+  nf_service_names:                     # NF type → systemd unit suffix (open5gs-<name>), for NF health and CPU
     AMF:  "amfd"
     SMF:  "smfd"
     UPF:  "upfd"
@@ -28,129 +36,68 @@ nwdaf:
     UDR:  "udrd"
     BSF:  "bsfd"
     NSSF: "nssfd"
-
-  # NF instance IDs (the nfInstanceId each Open5GS NF registers with the NRF).
-  # Required for Rel-18 NF_LOAD on the 3GPP interfaces: NF_LOAD is advertised
-  # only when this map is set. Use your deployment's real IDs — never
-  # placeholders, or the NWDAF would report load for NF instances that do not
-  # exist. Keys must appear in nf_service_names.
-  # nf_instance_ids:
-  #   AMF: "<amf nfInstanceId>"
-  #   SMF: "<smf nfInstanceId>"
-  #   UPF: "<upf nfInstanceId>"
-  # Or poll the NRF (NFListRetrieval + NFProfileRetrieval) every interval:
-  # resolves the types without a configured ID (only when exactly one instance
-  # of the type is registered) and reports each NF's NRF status (nfStatus)
-  # over the status window.
-  nrf_nf_discovery: false
-  nrf_nf_discovery_interval_seconds: 60
-  nrf_nf_status_window_seconds: 3600
-
-  # Data collection — UPF tunnel interfaces for throughput measurement
-  # gtp5g bypasses user-space capture; read /sys/class/net directly
-  throughput_interfaces:
-    - "ogstun"   # single-UE lab setup; ogstun2/3 don't exist
-    - "ens4"
-  throughput_history_size: 360      # 1 hour at 10s interval
-  collection_interval_seconds: 10
-
-  # OAM input: the NFs' Prometheus metrics endpoints (TS 28.552 measurement
-  # names), scraped every collection interval. These are the Open5GS v2.8.0
-  # defaults (metrics.server in each NF's YAML); they listen on loopback, so
-  # a remote NWDAF needs the NFs' metrics address changed.
-  # oam_metrics_endpoints:
+  # oam_metrics_endpoints:              # [R] each NF's Prometheus metrics (UEs/sessions per slice, session counters)
   #   AMF: "http://127.0.0.5:9090/metrics"
   #   SMF: "http://127.0.0.4:9090/metrics"
   #   UPF: "http://127.0.0.7:9090/metrics"
   #   PCF: "http://127.0.0.13:9090/metrics"
+  # amf_ue_info_endpoint: "http://127.0.0.5:9090/ue-info"  # [R] AMF per-UE list (UE locations; has SUPIs)
+  throughput_interfaces: ["ogstun"]     # UPF tunnel interfaces whose /sys counters give throughput
+  collection_interval_seconds: 10       # [R] sampling period of every source
+  throughput_history_size: 360          # samples kept per series (360 × 10 s = 1 h)
+  amf_journal_lines: 500                # journald lines read per tick from the AMF
+  smf_journal_lines: 500                # and from the SMF
+  supi_regex: "imsi-(\\d{15})"          # extracts the SUPI from Open5GS log lines
+  mongodb_uri: "mongodb://127.0.0.1:27017"  # Open5GS subscriber database (subscriber count)
+  mongodb_db:  "open5gs"
 
-  # Per-slice admission capacity, as an NSACF would be configured with it
-  # (Open5GS has none). SLICE_LOAD_LEVEL / NSI_LOAD_LEVEL are served only for
-  # these slices; load level = the higher of UEs ÷ max_ues and PDU sessions ÷
-  # max_pdu_sessions, in percent (interpretation I-9). Use your real limits.
-  # slice_capacity:
+  # ── Rel-18 analytics capability ───────────────────────────────────────────
+  # Each enables the analytics whose inputs it provides (README, Open5GS compatibility).
+  # nf_instance_ids:                    # [R] NF type → its NRF nfInstanceId (enables NF_LOAD without NRF polling)
+  #   AMF: "<amf nfInstanceId>"
+  # slice_capacity:                     # [R] per-S-NSSAI admission maxima: slice/NSI load level = occupancy (I-9)
   #   - snssai: {sst: 1, sd: "000001"}
   #     max_ues: 1000
   #     max_pdu_sessions: 2000
-  # slice_load_window_seconds: 300   # statistics period without startTs/endTs
+  # served_tai_list:                    # [R] the TAIs the core serves (amf.yaml tai); tac unquoted = decimal,
+  #   - {tac: 1}                        #     quoted 4/6 digits = hex; mcc/mnc default to plmn_mcc/plmn_mnc
+  # slice_load_window_seconds: 300          # [R] SLICE/NSI_LOAD_LEVEL period when the request gives none
+  # network_performance_window_seconds: 300 # [R] NETWORK_PERFORMANCE period when the request gives none
+  # ue_mobility_window_seconds: 3600        # [R] UE_MOBILITY period when the request gives none
+  # ue_location_history_seconds: 86400      # how long UE locations are kept (memory only)
+  # prediction_horizon_seconds: 900         # [R] how far ahead predictions may reach; 0 = no predictions (I-13)
+  # prediction_min_samples: 10              # [R] fewer samples give a prediction with confidence 0
+  # prediction_tolerance: 10                # [R] error (points) a prediction's confidence counts as correct
 
-  # The tracking areas the core serves (Open5GS amf.yaml tai list). Needed for
-  # Rel-18 NETWORK_PERFORMANCE from the metrics: the counts are per AMF and SMF,
-  # so they describe this whole area (interpretation I-11). With
-  # amf_ue_info_endpoint (below), NUM_OF_UE is answered for any area instead.
-  # tac: an unquoted decimal number as in amf.yaml (tac: 1), or quoted 4 or 6 hex digits ("000001").
-  # served_tai_list:
-  #   - {tac: "000001"}                  # mcc/mnc default to plmn_mcc/plmn_mnc
-  # network_performance_window_seconds: 300
+  # ── ML (operator API analytics) ───────────────────────────────────────────
+  model_dir: "/opt/nwdaf/models"        # where the anomaly model is saved
+  anomaly_contamination: 0.10           # [R] expected share of anomalies (Isolation Forest)
+  anomaly_seed: 0                       # model seed for reproducible training; 0 = random
+  anomaly_min_samples: 120              # samples needed before training (120 × 10 s = 20 min)
+  baseline_stddev_min_kbps: 0.5         # below this throughput spread, ABNORMAL_BEHAVIOUR reports BASELINE_TOO_LOW
+  ewma_alpha: 0.3                       # [R] EWMA smoothing (0 = never adapts, 1 = last sample only)
+  network_performance_weights:          # operator-API NETWORK_PERFORMANCE score weights, summing to 1.0
+    nf_health: 0.6                      # share of NFs active
+    dl_score:  0.2                      # downlink throughput (capped at 100)
+    pdu_score: 0.2                      # active PDU sessions (capped at 100)
 
-  # The AMF's per-UE list (Open5GS v2.8.0 /ue-info on its metrics server):
-  # UE locations for Rel-18 UE_MOBILITY (interpretation I-12). It lists SUPIs
-  # without authentication: keep the metrics port internal.
-  # amf_ue_info_endpoint: "http://127.0.0.5:9090/ue-info"
-  # ue_mobility_window_seconds: 3600     # statistics period without startTs/endTs
-  # ue_location_history_seconds: 86400   # kept in memory only
-
-  # Predictions of NF_LOAD and NSI_LOAD_LEVEL for a future startTs/endTs
-  # (interpretation I-13): Holt's linear trend over the collected history.
-  # prediction_horizon_seconds: 900   # how far ahead; 0 = no predictions
-  # prediction_min_samples: 10        # fewer: confidence 0
-  # prediction_tolerance: 10          # points of error counted as correct
-
-  # AMF journald log parsing — Open5GS v2.7.6 uses "imsi-XXXXXXXXXXXXXXX"
-  # Adjust supi_regex for earlier versions if needed
-  amf_journal_lines: 500
-  smf_journal_lines: 500
-  supi_regex: "imsi-(\\d{15})"
-
-  # MongoDB (for subscriber count via UDR/UDM)
-  mongodb_uri: "mongodb://127.0.0.1:27017"
-  mongodb_db:  "open5gs"
-
-  # NRF registration + heartbeat (TS 29.510 §5.3.2.4)
-  nrf_uri: "http://127.0.0.10:7777"  # Open5GS NRF binds to 127.0.0.10, not 127.0.0.1
-  nrf_register_on_startup: true
-  nrf_heartbeat_interval_seconds: 60   # TS 29.510 recommends ≤ 60s; 0 = disabled
-
-  # ML
-  model_dir: "/opt/nwdaf/models"
-  anomaly_contamination: 0.10       # Expected fraction of anomalies
-  anomaly_seed: 0                   # Seed for Isolation Forest reproducibility (0 = random)
-  anomaly_min_samples: 120          # ~20 min at 10s interval — matches retrain() quality gate
-  baseline_stddev_min_kbps: 0.5     # Below this, return BASELINE_TOO_LOW
-  ewma_alpha: 0.3                   # EWMA smoothing factor (0=no adaptation, 1=instant)
-
-  # Logging
-  log_level: "info"                 # trace|debug|info|warn|error
-  log_file: "/var/log/open5gs/nwdaf.log"
-
-  # PROD-01: throughput history + subscription persistence across restarts
-  # Requires libsqlite3-dev; set to "none" to disable (in-memory only, original behaviour)
-  history_backend: "sqlite"         # "none" | "sqlite"
+  # ── Logging and persistence ───────────────────────────────────────────────
+  log_level: "info"                     # [R] trace, debug, info, warn or error
+  log_file: "/var/log/open5gs/nwdaf.log"  # log file, besides the console
+  history_backend: "sqlite"             # "sqlite": history and subscriptions survive restarts; "none": memory only
   history_db_path: "/opt/nwdaf/history.db"
 
-  # PROD-06: SBI endpoint rate limiting (token bucket per client IP + global)
-  # Set to 0 to disable the respective limit
-  rate_limit_per_ip_rps: 10         # max requests/s from a single client IP
-  rate_limit_global_rps: 100        # max total requests/s across all clients
+  # ── Security ──────────────────────────────────────────────────────────────
+  tls_enabled: false                    # TLS on both listeners (build with TLS; the rel18 profile)
+  tls_cert_file: "/etc/open5gs/tls/nwdaf.pem"   # server certificate
+  tls_key_file:  "/etc/open5gs/tls/nwdaf.key"   # its private key
+  tls_ca_file:   "/etc/open5gs/tls/ca.pem"      # when set: mTLS, clients need a certificate from this CA
+  # oauth_enabled: false                # OAuth 2.0 tokens on the 3GPP interfaces (Open5GS has no token issuer)
+  # oauth_nrf_public_key_file: ""       # the NRF's token-signing public key (RS256/ES256)
+  # oauth_shared_secret_file: ""        # or a secret shared with the NRF (HS256)
+  rate_limit_per_ip_rps: 10             # requests/s allowed per client IP; 0 = no limit
+  rate_limit_global_rps: 100            # requests/s allowed in total; 0 = no limit
 
-  # ARCH-03: NETWORK_PERFORMANCE scoring weights (must sum to 1.0 ± 0.001)
-  network_performance_weights:
-    nf_health: 0.6   # fraction of NFs in active state
-    dl_score:  0.2   # downlink throughput score (capped at 100)
-    pdu_score: 0.2   # active PDU session score  (capped at 100)
-
-  # ARCH-05: TLS / mTLS for SBI interface (TS 33.501 §13.3)
-  # Requires rebuilding with:  cmake -DNWDAF_USE_TLS=ON ..
-  tls_enabled: false
-  tls_cert_file: "/etc/open5gs/tls/nwdaf.pem"
-  tls_key_file:  "/etc/open5gs/tls/nwdaf.key"
-  tls_ca_file:   "/etc/open5gs/tls/ca.pem"   # optional — when set, mTLS: clients must present a cert signed by this CA
-
-  # H1.6: OpenAPI document served from GET /nwdaf-analytics/v1/openapi.
-  # Installed here by `make install`; if the file is missing the endpoint
-  # returns 404 and the rest of the SBI is unaffected.
-  openapi_spec_path: "/etc/open5gs/openapi/nwdaf-analytics-v1.yaml"
-  # H1.7: the official 3GPP OpenAPI files (installed by `cmake --install`) the
-  # 3GPP interfaces validate requests against. Without them those interfaces
-  # answer 500 SYSTEM_FAILURE. From a build tree: build/3gpp-openapi.
-  openapi_3gpp_dir: "/etc/open5gs/openapi/3gpp"
+  # ── API documents ─────────────────────────────────────────────────────────
+  openapi_spec_path: "/etc/open5gs/openapi/nwdaf-analytics-v1.yaml"  # served at /nwdaf-analytics/v1/openapi
+  openapi_3gpp_dir: "/etc/open5gs/openapi/3gpp"  # official 3GPP files requests are validated against (missing = 500)
