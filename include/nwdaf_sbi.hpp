@@ -60,6 +60,8 @@ class NwdafSbiService {
 public:
     static constexpr const char* ANALYTICS_INFO_ROOT     = "/nnwdaf-analyticsinfo/v1";
     static constexpr const char* EVENTS_SUBSCRIPTION_ROOT = "/nnwdaf-eventssubscription/v1";
+    // SEC-03: the largest request body either listener accepts (413 above).
+    static constexpr size_t MAX_BODY_BYTES = 1 << 20;
 
     // `nf_monitor` supplies NF instance IDs and NRF status (H1.9); null = the
     // configured IDs only. `live` is the configuration as SIGHUP reloads it

@@ -34,6 +34,14 @@ TEST_CASE("H1.7: KNOWN_REL18 equals the official NwdafEvent enumeration") {
     REQUIRE(official_ids == NwdafAnalyticsCatalogue::KNOWN_REL18);
 }
 
+TEST_CASE("SEC-04: a very long string is refused against a pattern, without regex recursion") {
+    const std::string ref = "TS29571_CommonData.yaml#/components/schemas/SupportedFeatures";   // ^[A-Fa-f0-9]*$
+    REQUIRE(official().validate(nlohmann::json(std::string(NwdafSchemaValidator::MAX_PATTERN_INPUT, 'a')), ref).empty());
+    // Used to recurse once per character and overflow the stack.
+    const auto v = official().validate(nlohmann::json(std::string(1000000, 'a')), ref);
+    REQUIRE(v.size() == 1);
+}
+
 TEST_CASE("H1.7: a minimal NnwdafEventsSubscription is schema-valid") {
     json sub = {{"eventSubscriptions", {{{"event", "NF_LOAD"}}}},
                 {"notificationURI", "http://127.0.0.1:9999/cb"}};

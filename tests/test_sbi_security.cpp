@@ -254,6 +254,19 @@ TEST_CASE("H1.10: the operator health probe stays open") {
     REQUIRE(res->status == 200);
 }
 
+TEST_CASE("SEC-01: the deprecated POST /nnwdaf-analyticsinfo/v1/analytics also needs a token") {
+    OAuthServer srv;
+    httplib::Client op("127.0.0.1", OAUTH_PORT);
+    const std::string body = R"({"analyticsId":"NF_LOAD"})";
+    auto res = op.Post("/nnwdaf-analyticsinfo/v1/analytics", body, "application/json");
+    REQUIRE(res);
+    REQUIRE(res->status == 401);
+    httplib::Headers bearer = {{"Authorization", "Bearer any-token"}};
+    res = op.Post("/nnwdaf-analyticsinfo/v1/analytics", bearer, body, "application/json");
+    REQUIRE(res);
+    REQUIRE(res->status != 401);   // the operator API's Bearer check passes
+}
+
 TEST_CASE("H1.10: OAuth enabled without a key source stops startup") {
     NwdafConfig cfg = tlsConfig("", 0);
     cfg.oauth_enabled = true;

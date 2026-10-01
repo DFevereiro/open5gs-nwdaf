@@ -28,6 +28,10 @@ struct SchemaViolation {
 
 class NwdafSchemaValidator {
 public:
+    // SEC-04: the longest string matched against a schema pattern; a longer
+    // one is a violation (std::regex would recurse once per character).
+    static constexpr size_t MAX_PATTERN_INPUT = 8192;
+
     // base_dir: directory holding the YAML documents that refs name.
     explicit NwdafSchemaValidator(std::string base_dir);
 

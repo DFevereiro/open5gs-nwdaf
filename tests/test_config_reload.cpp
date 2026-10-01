@@ -9,6 +9,8 @@
 #include "nwdaf_nf_monitor.hpp"
 #include "nwdaf_sbi.hpp"
 #include "nwdaf_subscription.hpp"
+#include <spdlog/sinks/null_sink.h>
+#include <spdlog/spdlog.h>
 #include <thread>
 
 using json = nlohmann::json;
@@ -118,6 +120,26 @@ TEST_CASE("QOL-05: a reload changes what the 3GPP interfaces serve, without a re
     INFO(res.body);
     REQUIRE(res.status == 200);
     REQUIRE(json::parse(res.body)["sliceLoadLevelInfos"][0]["loadLevelInformation"] == 50);
+}
+
+TEST_CASE("QOL-05: raising log_level on reload reaches the log sinks") {
+    // As setupLogging() builds it: the sink filters at the start-up level too.
+    auto sink = std::make_shared<spdlog::sinks::null_sink_mt>();
+    sink->set_level(spdlog::level::info);
+    auto logger = std::make_shared<spdlog::logger>("reload-test", sink);
+    logger->set_level(spdlog::level::info);
+    const auto previous = spdlog::default_logger();
+    spdlog::set_default_logger(logger);
+
+    ReloadFixture f;
+    NwdafConfig fresh = f.cfg;
+    fresh.log_level = "debug";
+    (void)nwdafApplyReload(fresh, *f.live, f.collector, f.engine, *f.monitor, nullptr);
+    const bool sink_debug = sink->level() == spdlog::level::debug;
+    const bool logger_debug = logger->level() == spdlog::level::debug;
+    spdlog::set_default_logger(previous);
+    REQUIRE(sink_debug);
+    REQUIRE(logger_debug);
 }
 
 TEST_CASE("QOL-05: reloaded sources and NF instance IDs are used from the next tick") {

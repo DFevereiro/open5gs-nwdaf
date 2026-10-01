@@ -42,6 +42,11 @@ public:
 
     int heartbeatSeconds() const { return heartbeat_s_; }
 
+    // The wait before the next attempt after `misses` consecutive heartbeat
+    // failures: 2^(misses+1) s, at most 8 s before re-registration starts
+    // (3 misses) and 30 s after. Bounded for any count (SEC-02).
+    static int retryDelaySeconds(int misses);
+
 private:
     std::string instanceUrl() const;
 

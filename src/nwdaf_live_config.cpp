@@ -4,6 +4,7 @@
 #include "nwdaf_collector.hpp"
 #include "nwdaf_nf_monitor.hpp"
 #include "nwdaf_nrf_client.hpp"
+#include <spdlog/sinks/sink.h>
 #include <spdlog/spdlog.h>
 
 NwdafLiveConfig::NwdafLiveConfig(NwdafConfig config)
@@ -86,7 +87,11 @@ NwdafReloadResult nwdafApplyReload(const NwdafConfig& fresh, NwdafLiveConfig& li
     for (const auto& c : r.changed) names += (names.empty() ? "" : ", ") + c;
     spdlog::info("Config reload: {}", names);
 
-    spdlog::default_logger()->set_level(logLevel(merged.log_level));
+    // The logger and each of its sinks filter by level (setupLogging sets
+    // both), so raising the level needs all of them.
+    const auto level = logLevel(merged.log_level);
+    for (auto& sink : spdlog::default_logger()->sinks()) sink->set_level(level);
+    spdlog::default_logger()->set_level(level);
     collector.updateConfig(merged.collection_interval_seconds, merged.ewma_alpha);
     collector.updateSources(merged.oam_metrics_endpoints, merged.amf_ue_info_endpoint);
     engine.updateConfig(merged.anomaly_contamination);

@@ -132,10 +132,15 @@ NwdafConfig NwdafConfig::load(const std::string& yaml_path) {
             if (!e["tac"])
                 throw std::runtime_error("served_tai_list: every entry needs a tac");
             const std::string tac = e["tac"].as<std::string>();
+            // An unquoted number is decimal, as Open5GS amf.yaml writes TACs
+            // (tac: 1000); a quoted string of 4 or 6 digits is hex ("0003e8").
+            const bool digits = !tac.empty() && tac.find_first_not_of("0123456789") == std::string::npos;
+            const bool quoted = e["tac"].Tag() == "!";
             long value;
-            if (std::regex_match(tac, TAC_RE)) value = std::stol(tac, nullptr, 16);
-            else if (!tac.empty() && tac.find_first_not_of("0123456789") == std::string::npos) value = std::stol(tac);
-            else throw std::runtime_error("served_tai_list: tac must be 4 or 6 hex digits or a number: " + tac);
+            if (digits && !quoted) value = std::stol(tac);
+            else if (std::regex_match(tac, TAC_RE)) value = std::stol(tac, nullptr, 16);
+            else if (digits) value = std::stol(tac);
+            else throw std::runtime_error("served_tai_list: tac must be a number, or 4 or 6 hex digits quoted: " + tac);
             if (value < 0 || value > 0xFFFFFF)
                 throw std::runtime_error("served_tai_list: tac out of range: " + tac);
             char buf[8];

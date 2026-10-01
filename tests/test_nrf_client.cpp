@@ -224,6 +224,16 @@ TEST_CASE("QOL-05: a reload that changes the NF profile sends NFUpdate with the 
     REQUIRE(nrf.seen().size() == 1);
 }
 
+TEST_CASE("SEC-02: the heartbeat retry delay stays bounded however long the NRF is down") {
+    REQUIRE(NwdafNrfClient::retryDelaySeconds(0) == 2);
+    REQUIRE(NwdafNrfClient::retryDelaySeconds(1) == 4);
+    REQUIRE(NwdafNrfClient::retryDelaySeconds(2) == 8);
+    REQUIRE(NwdafNrfClient::retryDelaySeconds(3) == 16);
+    REQUIRE(NwdafNrfClient::retryDelaySeconds(4) == 30);
+    for (int m : {30, 31, 100, 1 << 20})   // 2 << 30 used to overflow
+        REQUIRE(NwdafNrfClient::retryDelaySeconds(m) == 30);
+}
+
 TEST_CASE("H1.9: heartbeat is an NFUpdate PATCH; 404 re-registers at once") {
     MockNrf nrf;
     NwdafNrfClient client(nrfConfig());

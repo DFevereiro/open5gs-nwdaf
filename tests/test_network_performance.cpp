@@ -83,6 +83,10 @@ TEST_CASE("H1.4: served_tai_list is parsed and validated") {
     REQUIRE(cfg.served_tai_list[0] == NwdafTai{"999", "70", "000001"});   // PLMN defaults to plmn_mcc/mnc
     REQUIRE(cfg.served_tai_list[1] == NwdafTai{"001", "01", "0000ab"});
     REQUIRE(cfg.served_tai_list[2].tac == "000007");
+    // An unquoted number is decimal, as in Open5GS amf.yaml; a quoted one is hex.
+    cfg = NwdafConfig::load(writeConfig("  served_tai_list:\n    - {tac: 1000}\n    - {tac: \"1000\"}\n"));
+    REQUIRE(cfg.served_tai_list[0].tac == "0003e8");
+    REQUIRE(cfg.served_tai_list[1].tac == "001000");
     REQUIRE_THROWS(NwdafConfig::load(writeConfig("  served_tai_list: [{tac: \"xyz\"}]\n")));
     REQUIRE_THROWS(NwdafConfig::load(writeConfig("  served_tai_list: [{mcc: \"999\"}]\n")));
 }

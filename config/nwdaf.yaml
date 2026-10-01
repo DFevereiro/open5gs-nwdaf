@@ -74,7 +74,7 @@ nwdaf:
   # Rel-18 NETWORK_PERFORMANCE from the metrics: the counts are per AMF and SMF,
   # so they describe this whole area (interpretation I-11). With
   # amf_ue_info_endpoint (below), NUM_OF_UE is answered for any area instead.
-  # tac: 4 or 6 hex digits, or a number.
+  # tac: an unquoted decimal number as in amf.yaml (tac: 1), or quoted 4 or 6 hex digits ("000001").
   # served_tai_list:
   #   - {tac: "000001"}                  # mcc/mnc default to plmn_mcc/plmn_mnc
   # network_performance_window_seconds: 300
@@ -146,3 +146,7 @@ nwdaf:
   # Installed here by `make install`; if the file is missing the endpoint
   # returns 404 and the rest of the SBI is unaffected.
   openapi_spec_path: "/etc/open5gs/openapi/nwdaf-analytics-v1.yaml"
+  # H1.7: the official 3GPP OpenAPI files (installed by `cmake --install`) the
+  # 3GPP interfaces validate requests against. Without them those interfaces
+  # answer 500 SYSTEM_FAILURE. From a build tree: build/3gpp-openapi.
+  openapi_3gpp_dir: "/etc/open5gs/openapi/3gpp"

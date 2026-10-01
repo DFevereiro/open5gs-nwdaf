@@ -65,6 +65,8 @@ NwdafServer::NwdafServer(NwdafAnalyticsEngine& engine,
         throw std::runtime_error("oauth_enabled requires a build with NWDAF_USE_TLS");
 #endif
     }
+    // SEC-03: the HTTP/1.1 listener has the HTTP/2 one's body limit (413 above it).
+    svr_->set_payload_max_length(NwdafSbiService::MAX_BODY_BYTES);
     setupRoutes();
 }
 
@@ -100,7 +102,11 @@ void NwdafServer::setupRoutes() {
                 return httplib::Server::HandlerResponse::Unhandled;
             }
             // H1.10: the 3GPP interfaces validate the token in serve3gpp().
-            if (NwdafSbiService::handles(req.path)) {
+            // SEC-01: except the deprecated JSON-body POST on the analytics
+            // path, which is the operator handler and gets the check below.
+            static const std::string analytics = std::string(NwdafSbiService::ANALYTICS_INFO_ROOT) + "/analytics";
+            const bool deprecated_post = req.method == "POST" && req.path == analytics;
+            if (NwdafSbiService::handles(req.path) && !deprecated_post) {
                 return httplib::Server::HandlerResponse::Unhandled;
             }
             if (req.has_header("Authorization")) {

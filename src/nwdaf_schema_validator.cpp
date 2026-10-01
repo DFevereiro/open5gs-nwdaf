@@ -200,8 +200,14 @@ void NwdafSchemaValidator::check(const json& doc, const json& raw,
         if (s.contains("maxLength") && codepoints(v) > s["maxLength"].get<size_t>())
             out.push_back({ptr, "longer than maxLength " + s["maxLength"].dump()});
         if (s.contains("pattern")) {
-            const std::regex* re = regexFor(s["pattern"].get<std::string>());
-            if (re && !std::regex_search(v, *re))
+            // SEC-04: std::regex recurses per character, so a long input can
+            // exhaust the stack. No TS 29.520 input with a pattern comes near
+            // this length: a longer one is refused unmatched.
+            const std::regex* re = v.size() > MAX_PATTERN_INPUT ? nullptr : regexFor(s["pattern"].get<std::string>());
+            if (v.size() > MAX_PATTERN_INPUT)
+                out.push_back({ptr, "longer than the " + std::to_string(MAX_PATTERN_INPUT) +
+                                    " characters this NWDAF matches against a pattern"});
+            else if (re && !std::regex_search(v, *re))
                 out.push_back({ptr, "does not match the pattern " + s["pattern"].get<std::string>()});
         }
     }

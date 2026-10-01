@@ -8,6 +8,7 @@
 #include <netinet/in.h>
 #include <poll.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <unistd.h>
 
 #include <cctype>
@@ -67,6 +68,7 @@ struct Stream {
     std::string method, path, authority;
     std::map<std::string, std::string> headers;
     std::string body;
+    bool        too_large = false;   // SEC-03: the body exceeded max_body_bytes
     std::string response;   // body being sent
     size_t      sent = 0;
 };
@@ -76,6 +78,7 @@ struct Session {
     std::string remote;
     bool tls;
     std::string client_nf_instance_id;   // from the TLS client certificate (H1.10)
+    size_t max_body;                     // SEC-03
     std::map<int32_t, std::unique_ptr<Stream>> streams;
 };
 
@@ -139,7 +142,12 @@ void respond(nghttp2_session* session, int32_t stream_id, Session& sess, Stream&
 
     SbiResponse res;
     try {
-        res = (*sess.handler)(req, sess.remote);
+        if (st.too_large)   // SEC-03: not buffered, not dispatched
+            res = {413, "application/problem+json",
+                   R"({"status":413,"title":"Payload Too Large","detail":"the request body exceeds the limit of this NWDAF"})",
+                   {}};
+        else
+            res = (*sess.handler)(req, sess.remote);
     } catch (const std::exception& e) {
         spdlog::error("HTTP/2: handler failed for {} {}: {}", req.method, req.path, e.what());
         res = {500, "", "", {}};
@@ -190,9 +198,16 @@ int onHeader(nghttp2_session*, const nghttp2_frame* frame, const uint8_t* name, 
 
 int onDataChunk(nghttp2_session*, uint8_t, int32_t stream_id, const uint8_t* data, size_t len,
                 void* user) {
-    auto& streams = static_cast<Session*>(user)->streams;
-    auto it = streams.find(stream_id);
-    if (it != streams.end()) it->second->body.append(reinterpret_cast<const char*>(data), len);
+    auto* sess = static_cast<Session*>(user);
+    auto it = sess->streams.find(stream_id);
+    if (it == sess->streams.end()) return 0;
+    Stream& st = *it->second;
+    if (st.too_large || st.body.size() + len > sess->max_body) {
+        st.too_large = true;   // SEC-03: stop buffering; answered 413
+        st.body.clear();
+        return 0;
+    }
+    st.body.append(reinterpret_cast<const char*>(data), len);
     return 0;
 }
 
@@ -303,7 +318,7 @@ void NwdafH2Server::stop() {
     }
     if (accept_thread_.joinable()) accept_thread_.join();
     std::lock_guard<std::mutex> lk(conn_mutex_);
-    for (auto& t : conn_threads_) if (t.joinable()) t.join();
+    for (auto& w : conn_threads_) if (w.t.joinable()) w.t.join();
     conn_threads_.clear();
 }
 
@@ -321,11 +336,33 @@ void NwdafH2Server::acceptLoop() {
         else
             inet_ntop(AF_INET, &reinterpret_cast<sockaddr_in*>(&addr)->sin_addr, host, sizeof(host));
         std::lock_guard<std::mutex> lk(conn_mutex_);
-        conn_threads_.emplace_back(&NwdafH2Server::serve, this, fd, std::string(host));
+        // SEC-03: join the connections that have ended, and refuse new ones
+        // beyond max_connections.
+        for (auto it = conn_threads_.begin(); it != conn_threads_.end();) {
+            if (!it->done->load()) { ++it; continue; }
+            it->t.join();
+            it = conn_threads_.erase(it);
+        }
+        if (conn_threads_.size() >= options_.max_connections) {
+            spdlog::warn("HTTP/2: {} connections open; refusing {}", conn_threads_.size(), host);
+            ::close(fd);
+            continue;
+        }
+        auto done = std::make_shared<std::atomic<bool>>(false);
+        conn_threads_.push_back({std::thread([this, fd, remote = std::string(host), done] {
+                                     serve(fd, remote);
+                                     done->store(true);
+                                 }),
+                                 done});
     }
 }
 
 void NwdafH2Server::serve(int fd, std::string remote) {
+    // SEC-03: a peer that stalls a TLS handshake, a record or a write can't
+    // hold the thread (or shutdown) longer than io_timeout_seconds.
+    timeval tv{options_.io_timeout_seconds, 0};
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
     Conn conn;
     conn.fd = fd;
 #ifdef NWDAF_USE_TLS
@@ -345,7 +382,7 @@ void NwdafH2Server::serve(int fd, std::string remote) {
     }
 #endif
 
-    Session sess{&handler_, remote, options_.tls, "", {}};
+    Session sess{&handler_, remote, options_.tls, "", options_.max_body_bytes, {}};
 #ifdef NWDAF_USE_TLS
     if (conn.ssl) {
         if (X509* cert = SSL_get1_peer_certificate(conn.ssl)) {

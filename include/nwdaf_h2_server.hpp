@@ -4,6 +4,8 @@
 #include "nwdaf_sbi.hpp"
 #include <atomic>
 #include <functional>
+#include <list>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -26,6 +28,10 @@ public:
         bool        tls = false;       // requires NWDAF_USE_TLS
         std::string cert_file, key_file;
         std::string ca_file;           // non-empty = require client certificates
+        // SEC-03: limits against stalled or abusive peers.
+        int    io_timeout_seconds = 10;     // a send, receive or TLS handshake that blocks longer ends the connection
+        size_t max_connections    = 256;    // further connections are closed at once
+        size_t max_body_bytes     = NwdafSbiService::MAX_BODY_BYTES;   // a larger request body is answered 413
     };
 
     NwdafH2Server(Options options, Handler handler);
@@ -48,8 +54,13 @@ private:
     int               port_ = 0;
     std::atomic<bool> running_{false};
     std::thread       accept_thread_;
+    // One thread per connection; finished ones are joined as new ones arrive.
+    struct Worker {
+        std::thread t;
+        std::shared_ptr<std::atomic<bool>> done;
+    };
     std::mutex        conn_mutex_;
-    std::vector<std::thread> conn_threads_;
+    std::list<Worker> conn_threads_;
     void*             ssl_ctx_ = nullptr;   // SSL_CTX* when TLS is enabled
 };
 

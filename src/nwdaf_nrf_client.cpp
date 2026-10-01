@@ -3,6 +3,7 @@
 #include "nwdaf_analytics_catalogue.hpp"
 #include "nwdaf_supported_features.hpp"
 #include <spdlog/spdlog.h>
+#include <algorithm>
 
 using json = nlohmann::json;
 
@@ -86,6 +87,12 @@ bool NwdafNrfClient::registerNf() {
         }
     } catch (const json::exception&) {}
     return true;
+}
+
+int NwdafNrfClient::retryDelaySeconds(int misses) {
+    const int cap = misses >= 3 ? 30 : 8;
+    if (misses < 0 || misses >= 5) return misses < 0 ? 2 : cap;   // 2 << 5 already exceeds 30
+    return std::min(cap, 2 << misses);
 }
 
 bool NwdafNrfClient::updateProfile() {

@@ -29,14 +29,11 @@
 
 static std::atomic<bool>   g_shutdown{false};
 static std::atomic<bool>   g_reload{false};   // QOL-05: set by SIGHUP
-static NwdafServer*        g_server_ptr    = nullptr;
-static NwdafCollector*     g_collector_ptr = nullptr;
 
-static void signalHandler(int sig) {
-    spdlog::info("Received signal {}, shutting down...", sig);
+// SEC-03: only async-signal-safe work here; the shutdown thread in main()
+// stops the servers (joining their threads) and the collector.
+static void signalHandler(int) {
     g_shutdown = true;
-    if (g_server_ptr)    g_server_ptr->stop();
-    if (g_collector_ptr) g_collector_ptr->stopBackgroundCollection();
 }
 
 // PROD-04 / QOL-05: SIGHUP asks for a reload; the reload thread in main()
@@ -106,8 +103,6 @@ int main(int argc, char* argv[]) {
     auto live = std::make_shared<NwdafLiveConfig>(config);
     NwdafServer           server(engine, subs, config, nf_monitor, live);
 
-    g_server_ptr    = &server;
-    g_collector_ptr = &collector;
     std::signal(SIGTERM, signalHandler);
     std::signal(SIGINT,  signalHandler);
     std::signal(SIGHUP,  sighupHandler);  // PROD-04
@@ -158,11 +153,12 @@ int main(int argc, char* argv[]) {
                     miss_count = 0;
                     continue;
                 }
-                if (++miss_count >= 3 && nrf.registerNf()) {
+                miss_count = std::min(miss_count + 1, 100);   // SEC-02: bounded
+                if (miss_count >= 3 && nrf.registerNf()) {
                     miss_count = 0;
                     continue;
                 }
-                elapsed = nrf.heartbeatSeconds() - std::min(miss_count >= 3 ? 30 : 8, 2 << miss_count);
+                elapsed = nrf.heartbeatSeconds() - NwdafNrfClient::retryDelaySeconds(miss_count);
             }
         });
     }
@@ -186,12 +182,21 @@ int main(int argc, char* argv[]) {
         }
     });
 
+    std::thread shutdown_thread([&]() {
+        while (!g_shutdown) std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        spdlog::info("Shutting down...");
+        server.stop();
+        collector.stopBackgroundCollection();
+    });
+
 #ifdef NWDAF_USE_SD_JOURNAL
     sd_notify(0, "READY=1");
 #endif
 
     spdlog::info("NWDAF ready on {}:{}", config.sbi_bind_address, config.sbi_port);
     server.start(); // blocking
+    g_shutdown = true;   // the listener also stops on its own failure
+    shutdown_thread.join();
 
 #ifdef NWDAF_ENABLE_PUSH_DELIVERY
     notifier.stop();

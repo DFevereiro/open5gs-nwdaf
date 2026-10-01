@@ -670,6 +670,14 @@ TEST_CASE("H1.7: NF_LOAD notifications are Rel-18 NnwdafEventsSubscriptionNotifi
 }
 #endif
 
+TEST_CASE("SEC-03: a request body above the limit is 413, not buffered") {
+    (void)nfLoadServer();
+    const std::string big = "{\"notificationURI\":\"" + std::string(NwdafSbiService::MAX_BODY_BYTES, 'a') + "\"}";
+    auto res = client().Post(SUBS, big, "application/json");
+    REQUIRE(res);
+    REQUIRE(res->status == 413);
+}
+
 TEST_CASE("H1.7: Subscribe asking for past NF_LOAD statistics is UNAVAILABLE_DATA") {
     (void)nfLoadServer();
     json sub = nfLoadSub(json(), {{"extraReportReq",
@@ -700,6 +708,27 @@ TEST_CASE("H1.7: PERIODIC notifications repeat and stop at maxReportNbr") {
 
     REQUIRE(consumer.count() == 2);            // maxReportNbr reached …
     REQUIRE_FALSE(srv.subs.exists(id));        // … and the subscription ended
+}
+
+TEST_CASE("H1.7: a subscription modified to ONE_TIME after a report reports once more and ends") {
+    auto& srv = nfLoadServer();
+    MockConsumer consumer;
+    // PERIODIC with a long period: one report, then not due for an hour.
+    const std::string id = createdId(client().Post(
+        SUBS, nfLoadSub({{"notifMethod", "PERIODIC"}, {"repPeriod", 3600}}).dump(), "application/json"));
+    NwdafNotifier notifier(srv.subs, srv.engine, 1, nullptr, nullptr, srv.cfg);
+    notifier.start();
+    REQUIRE(consumer.waitFor(1, std::chrono::seconds(8)) == 1);
+
+    // The modification starts the delivery state afresh: ONE_TIME is due.
+    auto put = client().Put(std::string(SUBS) + "/" + id, nfLoadSub({{"notifMethod", "ONE_TIME"}}).dump(),
+                            "application/json");
+    REQUIRE(put);
+    REQUIRE(put->status == 200);
+    REQUIRE(consumer.waitFor(2, std::chrono::seconds(8)) == 2);
+    std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+    notifier.stop();
+    REQUIRE_FALSE(srv.subs.exists(id));   // ONE_TIME ended it
 }
 
 TEST_CASE("H1.7: a subscription ends when monDur elapses") {

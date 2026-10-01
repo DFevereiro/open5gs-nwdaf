@@ -2,6 +2,8 @@
 #include "nwdaf_http_client.hpp"
 #include "nwdaf_sbi.hpp"
 #include <spdlog/spdlog.h>
+#include <cstdio>
+#include <functional>
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 #include <chrono>
@@ -58,6 +60,21 @@ void NwdafNotifier::stop() {
     spdlog::info("NwdafNotifier stopped");
 }
 
+namespace {
+
+// The prefix of a subscription's delivery and threshold state. A Rel-18
+// subscription's carries a fingerprint of its stored representation, so a
+// PUT starts afresh: a ONE_TIME event after a modification is due again, and
+// changed thresholds get new baselines.
+std::string stateKey(const Subscription& sub) {
+    if (sub.kind != "rel18") return sub.sub_id;
+    char rev[24];
+    std::snprintf(rev, sizeof(rev), "@%zx", std::hash<std::string>{}(sub.rel18_json));
+    return sub.sub_id + rev;
+}
+
+}  // namespace
+
 void NwdafNotifier::deliveryLoop() {
     while (running_) {
         // Sleep in 1-second increments for clean shutdown
@@ -68,14 +85,17 @@ void NwdafNotifier::deliveryLoop() {
         auto subs = subs_.listAll();
         auto now  = std::chrono::steady_clock::now();
 
-        // Drop the threshold baselines of subscriptions that no longer exist.
+        // Drop the delivery times and threshold baselines of subscriptions
+        // that no longer exist, or were modified since (stateKey).
         {
             std::set<std::string> live;
-            for (const auto& s : subs) live.insert(s.sub_id);
+            for (const auto& s : subs) live.insert(stateKey(s));
+            const auto stale = [&](const std::string& key) { return !live.count(key.substr(0, key.find('#'))); };
             std::lock_guard<std::mutex> lk(ts_mutex_);
             for (auto it = threshold_state_.begin(); it != threshold_state_.end();)
-                it = live.count(it->first.substr(0, it->first.find('#'))) ? std::next(it)
-                                                                         : threshold_state_.erase(it);
+                it = stale(it->first) ? threshold_state_.erase(it) : std::next(it);
+            for (auto it = last_delivered_.begin(); it != last_delivered_.end();)
+                it = stale(it->first) ? last_delivered_.erase(it) : std::next(it);
         }
 
         // Rel-18 reports read the same measurements: gather them once per poll.
@@ -199,7 +219,7 @@ void NwdafNotifier::deliverRel18(const Subscription& sub, const NwdafReportInput
     const auto& events = rep["eventSubscriptions"];
     for (size_t i = 0; i < events.size(); ++i) {
         const json& es = events[i];
-        const std::string tkey = sub.sub_id + "#" + std::to_string(i);
+        const std::string tkey = stateKey(sub) + "#" + std::to_string(i);
         if (NwdafSbiService::thresholdMode(evt_req, es)) {
             NwdafSbiService::ThresholdState next;
             {
@@ -218,7 +238,7 @@ void NwdafNotifier::deliverRel18(const Subscription& sub, const NwdafReportInput
         }
         const int period = evt_req.contains("notifMethod")
             ? evt_req.value("repPeriod", 0) : es.value("repetitionPeriod", 0);
-        const std::string key = sub.sub_id + "#" + std::to_string(i);
+        const std::string key = stateKey(sub) + "#" + std::to_string(i);
         {
             std::lock_guard<std::mutex> lk(ts_mutex_);
             auto it = last_delivered_.find(key);
