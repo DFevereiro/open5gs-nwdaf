@@ -30,7 +30,7 @@ std::optional<std::vector<NwdafUeInfoItem>> NwdafUeLocationTracker::parsePage(co
         if (!ue.is_object() || !ue.contains("supi") || !ue["supi"].is_string()) continue;
         if (!ue.contains("location") || !ue["location"].is_object()) continue;
         const json& loc = ue["location"];
-        // The AMF emits a location for every UE; timestamp 0 means it has
+        // O5GS-07: the AMF emits a location for every UE; timestamp 0 means it has
         // none yet.
         const double us = loc.value("timestamp", 0.0);
         if (us <= 0 || !loc.contains("nr_tai") || !loc.contains("nr_cgi")) continue;

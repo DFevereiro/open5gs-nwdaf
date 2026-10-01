@@ -18,7 +18,7 @@
 // monitor polls the NRF with NFManagement NFListRetrieval and
 // NFProfileRetrieval (TS 29.510 V18.11.0 §5.2.2.6, §5.2.2.7). It does not use
 // NFDiscover or NFStatusSubscribe: the NRF filters both by the target
-// profile's allowedNfTypes, and Open5GS v2.8.0 NFs never allow NWDAF, so an
+// profile's allowedNfTypes, and Open5GS v2.8.0 NFs never allow NWDAF (O5GS-02), so an
 // NWDAF requester sees no Open5GS NF through them (compliance doc,
 // interoperability records).
 //

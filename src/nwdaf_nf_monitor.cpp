@@ -38,6 +38,8 @@ void NwdafNfMonitor::refresh() {
         std::vector<std::string> listed;
         try {
             const json list = json::parse(res.body);   // must outlive the loop
+            // O5GS-01: Open5GS nests totalItemCount inside _links; only the
+            // item list is read.
             for (const auto& item : list.at("_links").value("item", json::array())) {
                 const std::string href = item.at("href").get<std::string>();
                 const std::string id = href.substr(href.rfind('/') + 1);

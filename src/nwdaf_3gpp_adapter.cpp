@@ -1,4 +1,5 @@
 #include "nwdaf_3gpp_adapter.hpp"
+#include "nwdaf_data_sources.hpp"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -24,7 +25,8 @@ json Nwdaf3gppAdapter::nfLoadLevelInfos(const std::vector<NfMetric>& metrics,
     for (const auto& m : metrics) {
         const auto id = nf_instance_ids.find(m.nf_type);
         if (id == nf_instance_ids.end()) continue;
-        // The collector measures load only for a running NF with a PID.
+        // The collector measures load only for a running NF with a PID. The
+        // CPU is measured here because the Open5GS NRF discards heartbeat load (O5GS-03).
         if (m.status != "active" || m.pid <= 0) continue;
         entry(m.nf_type, id->second)["nfCpuUsage"] =
             static_cast<int>(std::lround(std::clamp(m.load_pct, 0.0, 100.0)));
@@ -197,15 +199,13 @@ json Nwdaf3gppAdapter::nsiLoadPredictions(const NwdafConfig& cfg, const SliceQue
 // ── H1.4: NETWORK_PERFORMANCE (I-11) ────────────────────────────────────────
 
 bool Nwdaf3gppAdapter::nwPerfTypeAvailable(const std::string& type, const NwdafConfig& cfg) {
-    const bool served = !cfg.served_tai_list.empty();
-    if (type == "NUM_OF_UE")
-        return nwPerfPerArea(type, cfg) || (served && cfg.oam_metrics_endpoints.count("AMF") > 0);
-    if (type == "SESS_SUCC_RATIO") return served && cfg.oam_metrics_endpoints.count("SMF") > 0;
-    return false;
+    const auto& types = NwdafDataSources::networkPerformanceTypes();   // COMPAT-01
+    const auto it = types.find(type);
+    return it != types.end() && NwdafDataSources::satisfied(it->second, cfg);
 }
 
 bool Nwdaf3gppAdapter::nwPerfPerArea(const std::string& type, const NwdafConfig& cfg) {
-    return type == "NUM_OF_UE" && !cfg.amf_ue_info_endpoint.empty();
+    return type == "NUM_OF_UE" && NwdafDataSources::sourceOf(NwdafInput::UeLocations, cfg).has_value();
 }
 
 std::optional<double> Nwdaf3gppAdapter::ueCountInArea(const NwdafUeLocationTracker& ues, const json& area,

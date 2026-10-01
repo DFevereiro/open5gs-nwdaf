@@ -10,6 +10,7 @@ std::optional<double> NwdafNetworkPerformanceCalculator::numOfUe(const std::vect
     for (const auto& s : amf) {
         if (s.at < from || s.at > to) continue;
         double ues = 0.0;   // a scrape without the series: no UE registered yet
+        // O5GS-05: the gauge exists only per S-NSSAI; the PLMN's series are summed.
         for (const auto& p : s.samples) {
             if (p.name != "fivegs_amffunction_rm_registeredsubnbr") continue;
             const auto pl = p.labels.find("plmnid");
@@ -25,7 +26,8 @@ std::optional<double> NwdafNetworkPerformanceCalculator::numOfUe(const std::vect
 std::optional<double> NwdafNetworkPerformanceCalculator::sessSuccRatio(const std::vector<NwdafOamScrape>& smf,
                                                                        std::chrono::system_clock::time_point from,
                                                                        std::chrono::system_clock::time_point to) {
-    // Every request, once: the series without PLMN and S-NSSAI labels.
+    // Every request, once: the series without PLMN and S-NSSAI labels. Not
+    // the Succ counter, which Open5GS increments twice per session (O5GS-04).
     const auto req = increase(smf, from, to, [](const NwdafPromSample& p) {
         if (p.name != "fivegs_smffunction_sm_pdusessioncreationreq") return false;
         const auto pl = p.labels.find("plmnid");

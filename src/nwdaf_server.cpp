@@ -1,4 +1,6 @@
 #include "nwdaf_server.hpp"
+#include "nwdaf_data_sources.hpp"
+#include "nwdaf_open5gs_compat.hpp"
 #include "nwdaf_analytics_catalogue.hpp"
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
@@ -417,6 +419,24 @@ void NwdafServer::handleHealth(const httplib::Request& req, httplib::Response& r
             {"advertised",    NwdafAnalyticsCatalogue::rel18Advertised(*live_->get())},
             {"notAdvertised", NwdafAnalyticsCatalogue::rel18NotAdvertised(*live_->get())}
         }},
+        // COMPAT-02: the declared Open5GS version and the workarounds in force.
+        {"open5gs", [&] {
+            json ids = json::array();
+            for (const auto& q : NwdafOpen5gsCompat::quirks()) ids.push_back(q.id);
+            return json{{"version", config_.open5gs_version},
+                        {"verified", NwdafOpen5gsCompat::verified(config_.open5gs_version)},
+                        {"workarounds", ids}};
+        }()},
+        // COMPAT-01: the source of each analytics input (null = none).
+        {"dataSources", [&] {
+            const auto snapshot = live_->get();
+            json out = json::object();
+            for (auto input : NwdafDataSources::all()) {
+                const auto src = NwdafDataSources::sourceOf(input, *snapshot);
+                out[NwdafDataSources::name(input)] = src ? json(*src) : json();
+            }
+            return out;
+        }()},
         {"nfProfile", {
             {"nfType",       "NWDAF"},
             {"nfInstanceId", config_.nf_instance_id},

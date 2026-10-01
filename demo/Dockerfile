@@ -70,8 +70,9 @@ COPY dashboard/default /etc/nginx/sites-available/default
 COPY demo/gnb.yaml demo/ue.yaml /etc/ueransim/
 COPY demo/units/ /etc/systemd/system/
 COPY demo/scenario.sh /usr/local/bin/nwdaf-demo
+COPY tools/nwdaf-cli /usr/local/bin/nwdaf-cli
 COPY demo/provision-subscribers.sh /usr/local/bin/demo-provision-subscribers
-RUN chmod +x /usr/local/bin/nwdaf-demo /usr/local/bin/demo-provision-subscribers && \
+RUN chmod +x /usr/local/bin/nwdaf-demo /usr/local/bin/nwdaf-cli /usr/local/bin/demo-provision-subscribers && \
     systemctl enable mongod open5gs-nwdafd nginx demo-net demo-subscribers ueransim-gnb && \
     systemctl mask systemd-networkd.service systemd-networkd-wait-online.service \
         systemd-resolved.service getty@tty1.service

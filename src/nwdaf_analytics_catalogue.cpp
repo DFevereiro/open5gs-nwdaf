@@ -1,5 +1,5 @@
 #include "nwdaf_analytics_catalogue.hpp"
-#include "nwdaf_3gpp_adapter.hpp"
+#include "nwdaf_data_sources.hpp"
 
 const std::set<std::string> NwdafAnalyticsCatalogue::KNOWN_REL18 = {
     "SLICE_LOAD_LEVEL", "NETWORK_PERFORMANCE", "NF_LOAD", "SERVICE_EXPERIENCE",
@@ -47,28 +47,17 @@ std::string NwdafAnalyticsCatalogue::canonicalOperatorId(const std::string& id) 
 }
 
 std::map<std::string, std::string> NwdafAnalyticsCatalogue::rel18NotAdvertised(const NwdafConfig& cfg) {
+    // COMPAT-01: an implemented ID is advertised when the inputs of one of
+    // its alternatives all have a configured source (NwdafDataSources).
     std::map<std::string, std::string> out;
-    // NfLoadLevelInformation requires nfInstanceId: without a configured
-    // instance-ID source (the map, or NRF discovery) the NWDAF cannot
-    // produce NF_LOAD truthfully.
-    if (cfg.nf_instance_ids.empty() && !cfg.nrf_nf_discovery)
-        out["NF_LOAD"] = "no NF instance ID source: set nf_instance_ids or nrf_nf_discovery";
-    // I-9: slice load level is defined only against a configured slice
-    // capacity, whose counts come from the configured metrics endpoints.
-    if (cfg.slice_capacity.empty()) {
-        out["SLICE_LOAD_LEVEL"] = "slice_capacity is not configured";
-        out["NSI_LOAD_LEVEL"]   = "slice_capacity is not configured";
+    for (const auto& id : REL18_IMPLEMENTED) {
+        const auto& table = NwdafDataSources::analyticsRequirements();
+        const auto it = table.find(id);
+        // An implemented ID without an inputs entry is a defect: not advertised.
+        const std::string reason = it == table.end() ? "no inputs are defined for it"
+                                                     : NwdafDataSources::missingReason(it->second, cfg);
+        if (!reason.empty()) out[id] = reason;
     }
-    // I-11: at least one type needs its source: the AMF's UE list, or a
-    // metrics endpoint with the served area.
-    if (!Nwdaf3gppAdapter::nwPerfTypeAvailable("NUM_OF_UE", cfg) &&
-        !Nwdaf3gppAdapter::nwPerfTypeAvailable("SESS_SUCC_RATIO", cfg))
-        out["NETWORK_PERFORMANCE"] = cfg.served_tai_list.empty()
-            ? "served_tai_list (or amf_ue_info_endpoint) is not configured"
-            : "no AMF or SMF in oam_metrics_endpoints";
-    // I-12: UE locations come from the AMF's per-UE list.
-    if (cfg.amf_ue_info_endpoint.empty())
-        out["UE_MOBILITY"] = "amf_ue_info_endpoint is not configured";
     return out;
 }
 

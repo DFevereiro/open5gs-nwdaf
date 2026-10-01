@@ -169,6 +169,7 @@ NwdafConfig NwdafConfig::load(const std::string& yaml_path) {
     if (cfg.ue_location_history_seconds <= 0)
         throw std::runtime_error("ue_location_history_seconds must be positive");
 
+    if (n["open5gs_version"]) cfg.open5gs_version = n["open5gs_version"].as<std::string>();
     cfg.prediction_horizon_seconds = n["prediction_horizon_seconds"]
         ? n["prediction_horizon_seconds"].as<int>() : 900;
     cfg.prediction_min_samples = n["prediction_min_samples"] ? n["prediction_min_samples"].as<int>() : 10;

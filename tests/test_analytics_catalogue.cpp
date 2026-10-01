@@ -63,13 +63,16 @@ TEST_CASE("QOL-03: each implemented ID is either advertised or withheld with a r
         }
     };
     check();
-    REQUIRE(Cat::rel18NotAdvertised(cfg).at("NETWORK_PERFORMANCE") ==
-            "served_tai_list (or amf_ue_info_endpoint) is not configured");
-    REQUIRE(Cat::rel18NotAdvertised(cfg).at("SLICE_LOAD_LEVEL") == "slice_capacity is not configured");
+    REQUIRE(Cat::rel18NotAdvertised(cfg).at("NETWORK_PERFORMANCE") == "needs UE locations (amf_ue_info_endpoint)");
+    REQUIRE(Cat::rel18NotAdvertised(cfg).at("SLICE_LOAD_LEVEL") ==
+            "needs slice capacities (slice_capacity) and UEs per slice (oam_metrics_endpoints.AMF), or "
+            "slice capacities (slice_capacity) and PDU sessions per slice (oam_metrics_endpoints.SMF)");
 
     cfg.served_tai_list.push_back({"999", "70", "000001"});
     check();
-    REQUIRE(Cat::rel18NotAdvertised(cfg).at("NETWORK_PERFORMANCE") == "no AMF or SMF in oam_metrics_endpoints");
+    REQUIRE(Cat::rel18NotAdvertised(cfg).at("NETWORK_PERFORMANCE") ==
+            "needs UE locations (amf_ue_info_endpoint), or UEs per slice (oam_metrics_endpoints.AMF), or "
+            "PDU session setup counters (oam_metrics_endpoints.SMF)");
     cfg.oam_metrics_endpoints["SMF"] = "http://127.0.0.4:9090/metrics";
     cfg.nrf_nf_discovery = true;
     check();

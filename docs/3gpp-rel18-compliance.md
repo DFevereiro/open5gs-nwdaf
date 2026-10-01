@@ -31,7 +31,7 @@ exactly this scope:
 - DCCF and ADRF;
 - user consent.
 
-In Open5GS deployments, the NFs expose no event-exposure services and have no OAuth 2.0 (see the interoperability records). Analytics that need those inputs therefore can't be offered through standard data collection there.
+**What the claim covers, and what depends on the core.** The claim is about the NWDAF's own interfaces: the Nnwdaf services, the NRF interaction and security, whatever core it runs beside. Which analytics those interfaces serve depends on the inputs the core can feed (§9.1): an analytics is advertised only when its inputs have a configured source. In Open5GS deployments, the NFs expose no event-exposure services and have no OAuth 2.0 (see the interoperability records), so the inputs come from implementation-specific OAM sources, Open5GS's metrics and per-UE JSON, which TS 23.288 V18.13.0 §6.2 allows as OAM input. The Open5GS behaviours the NWDAF works around are listed in §9.2.
 
 **Roadmap:** work items refer to
 [`ENHANCEMENT_PLAN_5G_6G.md`](ENHANCEMENT_PLAN_5G_6G.md). H1.1–H1.6 are the
@@ -187,6 +187,39 @@ SLICE_LOAD_LEVEL and NSI_LOAD_LEVEL, when `slice_capacity` is configured; NETWOR
 | ML model training, provisioning and monitoring; federated learning; accuracy | — | `nnwdaf-mlmodelprovision`, `nnwdaf-mlmodeltraining`, `nnwdaf-mlmodelmonitor`, `accuReq`/`accuInfo` | Optional | Not implemented. Not needed for an NWDAF that only does analytics (AnLF). | H2.1, H2.3, H2.6, H3.3 | After M1. |
 | Roaming analytics | — | `nnwdaf-roaminganalytics`, `roamingInfo` | Out of scope | — | H3.6 | Handle `roamingInfo` requests through the failure semantics (for example `NO_ROAMING_SUPPORT` where that code applies). |
 | User consent | — | TS 23.288 V18.13.0 §6.2.9 | Optional | Not implemented. | — | Deferred. Document the deployment assumption. |
+
+### 9.1 Analytics inputs by core (COMPAT-01)
+
+`NwdafDataSources` (`src/nwdaf_data_sources.cpp`) names the inputs each Rel-18 analytics needs; an analytics is advertised when one alternative's inputs all have a configured source (tests `tests/test_compat.cpp`). The operator `/health` shows each input's source under `dataSources` and, for what isn't advertised, what is missing.
+
+| Analytics | Inputs (any one row) | Open5GS v2.8.0 source | Standard source for other cores |
+|---|---|---|---|
+| NF_LOAD | NF instance IDs | `nf_instance_ids`, or the NRF (NFListRetrieval) | the NRF (NFDiscover) |
+| SLICE_LOAD_LEVEL, NSI_LOAD_LEVEL | slice capacities + UEs per slice | `slice_capacity` + AMF metrics | `slice_capacity` or an NSACF; OAM (TS 28.552 RM.RegisteredSubNbrMean) |
+| | slice capacities + PDU sessions per slice | `slice_capacity` + SMF metrics | OAM (TS 28.552 SM.SessionNbr) |
+| NETWORK_PERFORMANCE | UE locations (`NUM_OF_UE` for any area) | AMF `/ue-info` | `Namf_EventExposure` LOCATION_REPORT |
+| | served area + UEs per slice (`NUM_OF_UE`, whole area) | `served_tai_list` + AMF metrics | OAM |
+| | served area + session setup counters (`SESS_SUCC_RATIO`) | `served_tai_list` + SMF metrics | OAM (TS 28.552 SM.PduSessionCreation*) |
+| UE_MOBILITY | UE locations | AMF `/ue-info` | `Namf_EventExposure` LOCATION_REPORT |
+
+The standard sources aren't implemented: a backend for them (H1.1) would add sources for the same inputs, and the same analytics would be advertised from them with no change to the 3GPP interfaces.
+
+### 9.2 Open5GS workarounds (COMPAT-02, COMPAT-03)
+
+`NwdafOpen5gsCompat` (`src/nwdaf_open5gs_compat.cpp`) lists each Open5GS behaviour the NWDAF works around, as `O5GS-NN`, tagged at the code that handles it and backed by an interoperability record (enforced by `tests/test_compat.cpp`). They were verified on Open5GS v2.8.0; a deployment declares its version in `open5gs_version`, logged at startup with a warning when it hasn't been verified, and shown under `open5gs` in `/health`.
+
+| ID | Open5GS v2.8.0 | The NWDAF |
+|---|---|---|
+| O5GS-01 | NFListRetrieval nests `totalItemCount` inside `_links` | reads `_links.item` only |
+| O5GS-02 | no NF lists NWDAF in `allowedNfTypes`, so NFDiscover / NFStatusSubscribe return nothing | uses NFListRetrieval and NFProfileRetrieval |
+| O5GS-03 | the NRF discards the `load` of heartbeats | reports the CPU measured from `/proc` (I-5) |
+| O5GS-04 | `pdusessioncreationsucc` counts twice per session | Req − Fail from the unlabelled request series (I-11) |
+| O5GS-05 | registered UEs only per subscribed S-NSSAI | sums them for `NUM_OF_UE`; slice occupancy may overstate (A.6) |
+| O5GS-06 | UPF N3 and per-QFI counters compiled out | throughput from `/sys/class/net` |
+| O5GS-07 | per-UE data only as `/ue-info` JSON, timestamp 0 before a location | polls every page, skips timestamp 0 (I-12) |
+| O5GS-08 | no NF event exposure, no OAuth 2.0 | OAM-style inputs; `oauth_enabled` off |
+
+`demo/interop-check.sh`, nightly in `.github/workflows/interop.yml`, runs against the live demo core (Open5GS from `ppa:open5gs/latest`, UERANSIM UEs). It probes the Open5GS outputs these workarounds rely on, compares the NWDAF's answers with the core's ground truth (UEs in a TA, the slice load, the NRF registration), and fails when the declared `open5gs_version` isn't the installed one. A new Open5GS release that changes a format fails there, naming the workaround.
 
 ## 10. OpenAPI publication
 

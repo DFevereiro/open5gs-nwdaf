@@ -159,7 +159,7 @@ TEST_CASE("H1.1: UE_MOBILITY is advertised only with the AMF UE list configured"
     REQUIRE(NwdafSupportedFeatures::local(NnwdafApi::AnalyticsInfo, cfg).has(1));
     REQUIRE(NwdafSupportedFeatures::local(NnwdafApi::EventsSubscription, cfg).has(2));
     cfg.amf_ue_info_endpoint.clear();
-    REQUIRE(NwdafAnalyticsCatalogue::rel18NotAdvertised(cfg).at("UE_MOBILITY") == "amf_ue_info_endpoint is not configured");
+    REQUIRE(NwdafAnalyticsCatalogue::rel18NotAdvertised(cfg).at("UE_MOBILITY") == "needs UE locations (amf_ue_info_endpoint)");
 }
 
 // A service over a mock collector that polled the AMF twice: UE A moved from

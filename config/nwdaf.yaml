@@ -3,6 +3,10 @@
 # served_tai_list, nf_instance_ids), window and prediction settings; the rest
 # needs a restart (README, Configuration).
 nwdaf:
+  # COMPAT-02: the Open5GS version of the core; the NWDAF's workarounds were
+  # verified on 2.8.0, and another version is warned about at startup.
+  # open5gs_version: "2.8.0"
+
   # NF identity
   nf_instance_id: "198e9234-b849-42a2-9f70-d9a587616c2b"  # stable — do not regenerate
   plmn_mcc: "999"

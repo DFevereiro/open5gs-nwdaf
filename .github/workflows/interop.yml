@@ -1,0 +1,37 @@
+name: Open5GS interop
+
+# COMPAT-03: the NWDAF against a live Open5GS core with UERANSIM UEs (the
+# demo/ container), nightly and on demand. demo/interop-check.sh probes the
+# Open5GS outputs the workarounds rely on and compares the NWDAF's answers
+# with the core's own ground truth. The Open5GS version is the one the demo
+# image installs (ppa:open5gs/latest); a failure after an Open5GS release
+# points at the workaround (O5GS-NN) that no longer matches.
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  interop:
+    name: Open5GS + UERANSIM
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and start the demo core
+        run: DEMO_PORT=18080 demo/run.sh
+
+      - name: Open5GS version
+        run: docker exec nwdaf-demo dpkg-query -W -f='${Version}\n' open5gs
+
+      - name: Interoperability checks
+        run: demo/interop-check.sh
+
+      - name: NWDAF log
+        if: failure()
+        run: docker exec nwdaf-demo journalctl -u open5gs-nwdafd -n 200 --no-pager
+
+      - name: Stop
+        if: always()
+        run: demo/run.sh stop

@@ -371,6 +371,25 @@ components:
             notAdvertised:
               type: object
               additionalProperties: { type: string }
+        open5gs:
+          description: |
+            COMPAT-02: the declared `open5gs_version`, whether this NWDAF's
+            Open5GS workarounds were verified on it, and their IDs.
+          type: object
+          required: [version, verified, workarounds]
+          properties:
+            version:     { type: string }
+            verified:    { type: boolean }
+            workarounds: { type: array, items: { type: string } }
+        dataSources:
+          description: |
+            The source of each input the Rel-18 analytics are computed from
+            (`config`, `nrf`, or an Open5GS backend such as
+            `open5gs:amf-ue-info`); null when none is configured.
+          type: object
+          additionalProperties:
+            type: string
+            nullable: true
         nfProfile:
           type: object
           required: [nfType, nfInstanceId, nwdafInfo]

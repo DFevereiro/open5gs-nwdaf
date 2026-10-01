@@ -34,6 +34,10 @@ nwdaf:
       max_pdu_sessions: 5
   slice_load_window_seconds: 30     # short, so the demo level follows the UEs quickly
 
+  # The Open5GS version the workarounds were verified on (COMPAT-02); the
+  # interop check (demo/interop-check.sh) compares it with the installed one.
+  open5gs_version: "2.8.0"
+
   # Open5GS's default AMF serves TAC 1 of PLMN 999-70 (NETWORK_PERFORMANCE, I-11).
   served_tai_list:
     - {tac: "000001"}

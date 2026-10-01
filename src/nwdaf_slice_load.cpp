@@ -15,6 +15,7 @@ std::optional<NwdafNumberStat> stat(const std::vector<NwdafOamScrape>& scrapes, 
     for (const auto& s : scrapes) {
         if (s.at < from || s.at > to) continue;
         double v = 0.0;   // series not created yet = no UE / session so far
+        // O5GS-05: per subscribed S-NSSAI, as the AMF counts it (A.6).
         for (const auto& p : s.samples) {
             if (p.name != metric) continue;
             const auto pl = p.labels.find("plmnid");

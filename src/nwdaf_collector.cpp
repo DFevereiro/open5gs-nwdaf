@@ -198,6 +198,8 @@ double NwdafCollector::computeCpuPct(int pid) {
 }
 
 // ── /sys/class/net helpers ────────────────────────────────────────────────────
+// O5GS-06: the Open5GS UPF's own N3 and per-QFI counters are compiled out, so
+// throughput comes from the tunnel interfaces.
 
 std::pair<uint64_t,uint64_t> NwdafCollector::readNetStats(const std::string& iface) {
     auto readFile = [](const std::string& path) -> uint64_t {

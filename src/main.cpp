@@ -6,6 +6,7 @@
 #include "nwdaf_nrf_client.hpp"
 #include "nwdaf_nf_monitor.hpp"
 #include "nwdaf_live_config.hpp"
+#include "nwdaf_open5gs_compat.hpp"
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
@@ -84,6 +85,7 @@ int main(int argc, char* argv[]) {
 
     setupLogging(config);
     spdlog::info("Open5GS NWDAF starting (instance: {})", config.nf_instance_id);
+    NwdafOpen5gsCompat::announce(config);   // COMPAT-02
 
     NwdafCollector        collector(config);
     NwdafAnalyticsEngine  engine(collector, config);

@@ -38,6 +38,7 @@ add_executable(nwdaf_tests
     test_ue_mobility.cpp         # H1.1 UE_MOBILITY (I-12)
     test_predictions.cpp         # H1.7 predictions (I-13)
     test_config_reload.cpp       # QOL-05 SIGHUP reload
+    test_compat.cpp              # COMPAT-01/02 inputs, sources, Open5GS workarounds
 )
 nwdaf_warnings(nwdaf_tests)
 target_include_directories(nwdaf_tests PRIVATE

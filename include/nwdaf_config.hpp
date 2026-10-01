@@ -84,6 +84,9 @@ public:
     int ue_mobility_window_seconds = 3600;
     // H1.1: how long UE location history is kept (memory only).
     int ue_location_history_seconds = 86400;
+    // COMPAT-02: the Open5GS version the core runs; the workarounds were
+    // verified on NwdafOpen5gsCompat::VERIFIED_VERSIONS.
+    std::string open5gs_version = "2.8.0";
     // H1.7: predictions (I-13). How far ahead the end of a predicted period
     // may lie; the samples below which the confidence is 0; and the error,
     // in percentage points, still counted as a correct prediction.

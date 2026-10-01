@@ -134,6 +134,10 @@ IDs are spelled as in the Rel-18 `NwdafEvent` enum. The operator API still accep
 
 **Release 18.** The frozen Rel-18 baseline is [`docs/frozen-standards.md`](docs/frozen-standards.md), and the gap analysis is [`docs/3gpp-rel18-compliance.md`](docs/3gpp-rel18-compliance.md). Milestone **M1 passed** (2026-09-28): the NWDAF is **Release 18 compliant for the supported scope**, in builds with the `rel18-sbi` profile (HTTP/2 + TLS). The Rel-18 3GPP interfaces serve **NF_LOAD**, **SLICE_LOAD_LEVEL** and **NSI_LOAD_LEVEL** for slices with a configured capacity (load level per interpretation I-9), **NETWORK_PERFORMANCE** (`NUM_OF_UE` for any area of TAs or cells with the AMF's UE list, `SESS_SUCC_RATIO` for the configured served area; I-11), and **UE_MOBILITY** for SUPIs, from the AMF's per-UE list (I-12). NF_LOAD and NSI_LOAD_LEVEL are also predicted for a future analytics target period within the prediction horizon, with a confidence (I-13). The other analytics listed above are served on the operator API; their Rel-18 forms are not yet advertised, because they need inputs the scraped data path lacks. Open5GS v2.8.0 exposes no NF event-exposure services and no OAuth 2.0 (see the compliance doc).
 
+### Open5GS compatibility
+
+The 3GPP interfaces are the same whatever core the NWDAF runs beside; what the core can feed decides which analytics they serve. Each Rel-18 analytics needs certain inputs (UE locations, UEs per slice, session counters, …), and it is advertised only when those inputs have a source (`dataSources` in `/health`). With Open5GS, which has no NF event exposure, the sources are its metrics and per-UE JSON, an OAM-style input TS 23.288 allows. The Open5GS behaviours the NWDAF works around (`O5GS-01` … `O5GS-08`) are listed, with the version they were verified on, in [`docs/3gpp-rel18-compliance.md`](docs/3gpp-rel18-compliance.md) §9.2. Set `open5gs_version` to your core's version: an unverified one is warned about at startup. A nightly CI job (`demo/interop-check.sh`) checks those workarounds against a live Open5GS core.
+
 ### OpenAPI contract
 
 The SBI *as currently served* is published as an OpenAPI 3.0 document at
@@ -251,7 +255,7 @@ Base URL: `http://<host>:7779`
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/nwdaf-analytics/v1/health` | Liveness probe (returns `UP` immediately). Also reports the transport profile, the metrics endpoints' scrape status (`oamSources`), and which Rel-18 analytics are advertised, with the missing configuration for the rest (`rel18Analytics`). |
+| `GET` | `/nwdaf-analytics/v1/health` | Liveness probe (returns `UP` immediately). Also reports the transport profile, the metrics endpoints' scrape status (`oamSources`), which Rel-18 analytics are advertised, with the missing inputs for the rest (`rel18Analytics`), the source of each analytics input (`dataSources`), and the declared Open5GS version with the workarounds in force (`open5gs`). |
 | `GET` | `/nwdaf-analytics/v1/ready` | Readiness probe (`READY` once ML models are fitted, `503` otherwise) |
 | `GET` | `/nwdaf-analytics/v1/metrics` | Prometheus metrics |
 | `GET` | `/nwdaf-analytics/v1/openapi` | The published OpenAPI 3.0 contract (`application/yaml`) |
@@ -351,6 +355,7 @@ Everything deployment-specific lives in [`config/nwdaf.yaml`](config/nwdaf.yaml)
 | `ue_location_history_seconds` | `86400` | How long UE locations are kept, in memory only. |
 | `prediction_horizon_seconds` | `900` | How far ahead a predicted period (a future `startTs`/`endTs`) may end, for NF_LOAD and NSI_LOAD_LEVEL (I-13). `0` turns predictions off. |
 | `prediction_min_samples` | `10` | Fewer samples than this give a prediction with confidence 0, as TS 29.520 requires when data is insufficient. |
+| `open5gs_version` | `2.8.0` | The Open5GS version of the core. The workarounds for Open5GS behaviour were verified on 2.8.0; another version is logged as unverified at startup. |
 | `prediction_tolerance` | `10` | The error, in percentage points, still counted as a correct prediction: the confidence is the probability of staying within it. |
 | `slice_load_window_seconds` | `300` | Period of the slice load statistics when the consumer gives no `startTs`/`endTs`: the last N seconds. |
 | `collection_interval_seconds` | `10` | Collector cadence |
