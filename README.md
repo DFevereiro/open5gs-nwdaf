@@ -194,6 +194,17 @@ sudo apt-get install -y --no-install-recommends \
 
 ### Build
 
+**One command** — `build.sh` installs the packages its profile needs (`--deps`, apt), configures with download retries, builds, and optionally tests and installs:
+
+```bash
+./build.sh --deps --tests            # the Rel-18 compliant build (HTTP/2 + TLS), with its tests
+./build.sh --install                 # then install: binary, config, OpenAPI files, systemd unit
+./build.sh --profile full            # HTTP/2, TLS off (OpenSSL < 3.0, e.g. Ubuntu 20.04)
+./build.sh --profile minimal         # dev-legacy: no journald, TLS or HTTP/2
+```
+
+It checks the known toolchain pitfalls first (CMake < 3.22, OpenSSL < 3.0 for TLS, GCC ≥ 16 with the pinned yaml-cpp, CMake 4's policy flag). `./build.sh --help` lists every option. The manual steps:
+
 **Ubuntu 22.04+ (full features):**
 
 ```bash

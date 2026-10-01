@@ -62,7 +62,9 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DNWDAF_BUILD_TESTS=ON
 cmake --build build --parallel "$(nproc)"
 ```
 
-TLS and HTTP/2 are on by default, so this is the `rel18-sbi` profile. GCC 13
+Or, from the repository root, `./build.sh --deps --tests` does both steps and
+runs the tests (`./build.sh --help` for the options). TLS and HTTP/2 are on by
+default, so this is the `rel18-sbi` profile. GCC 13
 and 14 are supported: warnings are errors only in this project's code, not in
 the fetched dependencies (BUILD-01).
 

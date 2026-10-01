@@ -10,6 +10,8 @@ A standalone NWDAF (Network Data Analytics Function) daemon, Release 18 complian
 
 CMake ≥ 3.22. cpp-httplib, nlohmann/json, yaml-cpp, spdlog and Catch2 are pulled by `FetchContent` at configure time, so the first configure needs network access. Don't install them from apt.
 
+`./build.sh` wraps the steps below: `--deps` installs the apt packages of its profile (`rel18` default, `full`, `minimal`), `--tests` runs ctest, `--install` installs, `--openapi-dir` uses an offline copy of the 3GPP files. Keep its package lists and flags in step with `ci.yml`.
+
 ```bash
 # Full build (needs libsystemd-dev, libssl-dev with OpenSSL >= 3.0, libsqlite3-dev)
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DNWDAF_BUILD_TESTS=ON
