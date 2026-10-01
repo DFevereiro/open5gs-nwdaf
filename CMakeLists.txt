@@ -186,6 +186,7 @@ set(NWDAF_LIB_SOURCES
     src/ml/isolation_forest.cpp
     src/ml/ewma_predictor.cpp
     src/ml/mos_estimator.cpp
+    src/ml/holt_forecaster.cpp
 )
 
 if(NWDAF_ENABLE_PUSH_DELIVERY)

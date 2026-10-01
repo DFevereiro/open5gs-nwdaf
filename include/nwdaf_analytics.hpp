@@ -50,6 +50,7 @@ public:
     std::vector<NwdafOamSource> getOamSources()       const;   // H1.1
     std::vector<NwdafOamScrape> getOamHistory(const std::string& nf_type) const;   // H1.2
     std::shared_ptr<const NwdafUeLocationTracker> getUeLocations() const;        // H1.1
+    std::vector<NwdafNfLoadScrape> getNfLoadHistory() const;                     // H1.7
 
     // ARCH-01: data-quality-driven confidence computation (public for testability)
     // Returns 0 if data_points < min_points; otherwise scales linearly with

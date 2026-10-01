@@ -38,7 +38,7 @@ The **NWDAF (Network Data Analytics Function)** is the intelligence layer of the
 
 | Capability | Details |
 |---|---|
-| 🛰️ **3GPP Rel-18 SBI** | Nnwdaf_AnalyticsInfo and Nnwdaf_EventsSubscription (TS 29.520) over HTTP/2 on port 7780. Requests are validated against the official 3GPP OpenAPI files, with supported-features negotiation and the spec's failure semantics. Serves **NF_LOAD**, **SLICE_LOAD_LEVEL**, **NSI_LOAD_LEVEL**, **NETWORK_PERFORMANCE** (`NUM_OF_UE`, `SESS_SUCC_RATIO`) and **UE_MOBILITY** (TA and cell per UE) |
+| 🛰️ **3GPP Rel-18 SBI** | Nnwdaf_AnalyticsInfo and Nnwdaf_EventsSubscription (TS 29.520) over HTTP/2 on port 7780. Requests are validated against the official 3GPP OpenAPI files, with supported-features negotiation and the spec's failure semantics. Serves **NF_LOAD**, **SLICE_LOAD_LEVEL**, **NSI_LOAD_LEVEL**, **NETWORK_PERFORMANCE** (`NUM_OF_UE`, `SESS_SUCC_RATIO`) and **UE_MOBILITY** (TA and cell per UE). NF_LOAD and NSI_LOAD_LEVEL are also predicted for a future period, with a confidence |
 | 🔔 **Subscriptions** | Subscribe / modify / unsubscribe with PERIODIC, ONE_TIME and THRESHOLD / ON_EVENT_DETECTION reporting, immediate reports, and notifications over HTTP/2 |
 | 📊 **Operator API** | 10 analytics on `/nwdaf-analytics/v1` for the dashboard and Prometheus: NF load, UE mobility, UE communication, abnormal behaviour, QoS sustainability, service experience, network performance, SM congestion, redundant transmission, dispersion |
 | 🤖 **Embedded ML** | Native C++ Isolation Forest (anomaly detection), EWMA predictor (load forecasting) and ITU-T G.107 E-model (MOS). Atomic model persistence, retraining via the API |
@@ -132,7 +132,7 @@ H1.1–H1.3 for the work that lifts those limits.
 
 IDs are spelled as in the Rel-18 `NwdafEvent` enum. The operator API still accepts the legacy spellings `QoS_SUSTAINABILITY` and `REDUNDANT_TRANSMISSION` on input.
 
-**Release 18.** The frozen Rel-18 baseline is [`docs/frozen-standards.md`](docs/frozen-standards.md), and the gap analysis is [`docs/3gpp-rel18-compliance.md`](docs/3gpp-rel18-compliance.md). Milestone **M1 passed** (2026-09-28): the NWDAF is **Release 18 compliant for the supported scope**, in builds with the `rel18-sbi` profile (HTTP/2 + TLS). The Rel-18 3GPP interfaces serve **NF_LOAD**, **SLICE_LOAD_LEVEL** and **NSI_LOAD_LEVEL** for slices with a configured capacity (load level per interpretation I-9), **NETWORK_PERFORMANCE** (`NUM_OF_UE` for any area of TAs or cells with the AMF's UE list, `SESS_SUCC_RATIO` for the configured served area; I-11), and **UE_MOBILITY** for SUPIs, from the AMF's per-UE list (I-12). The other analytics listed above are served on the operator API; their Rel-18 forms are not yet advertised, because they need inputs the scraped data path lacks. Open5GS v2.8.0 exposes no NF event-exposure services and no OAuth 2.0 (see the compliance doc).
+**Release 18.** The frozen Rel-18 baseline is [`docs/frozen-standards.md`](docs/frozen-standards.md), and the gap analysis is [`docs/3gpp-rel18-compliance.md`](docs/3gpp-rel18-compliance.md). Milestone **M1 passed** (2026-09-28): the NWDAF is **Release 18 compliant for the supported scope**, in builds with the `rel18-sbi` profile (HTTP/2 + TLS). The Rel-18 3GPP interfaces serve **NF_LOAD**, **SLICE_LOAD_LEVEL** and **NSI_LOAD_LEVEL** for slices with a configured capacity (load level per interpretation I-9), **NETWORK_PERFORMANCE** (`NUM_OF_UE` for any area of TAs or cells with the AMF's UE list, `SESS_SUCC_RATIO` for the configured served area; I-11), and **UE_MOBILITY** for SUPIs, from the AMF's per-UE list (I-12). NF_LOAD and NSI_LOAD_LEVEL are also predicted for a future analytics target period within the prediction horizon, with a confidence (I-13). The other analytics listed above are served on the operator API; their Rel-18 forms are not yet advertised, because they need inputs the scraped data path lacks. Open5GS v2.8.0 exposes no NF event-exposure services and no OAuth 2.0 (see the compliance doc).
 
 ### OpenAPI contract
 
@@ -347,6 +347,9 @@ Everything deployment-specific lives in [`config/nwdaf.yaml`](config/nwdaf.yaml)
 | `amf_ue_info_endpoint` | _(empty)_ | The AMF's per-UE list, polled every collection interval for UE locations (Open5GS v2.8.0: `http://127.0.0.5:9090/ue-info`, on its metrics server). UE_MOBILITY is served and advertised only when set (I-12). The list carries SUPIs and is served without authentication, so keep the metrics port internal. |
 | `ue_mobility_window_seconds` | `3600` | Period of the UE_MOBILITY statistics when the consumer gives no `startTs`/`endTs`. |
 | `ue_location_history_seconds` | `86400` | How long UE locations are kept, in memory only. |
+| `prediction_horizon_seconds` | `900` | How far ahead a predicted period (a future `startTs`/`endTs`) may end, for NF_LOAD and NSI_LOAD_LEVEL (I-13). `0` turns predictions off. |
+| `prediction_min_samples` | `10` | Fewer samples than this give a prediction with confidence 0, as TS 29.520 requires when data is insufficient. |
+| `prediction_tolerance` | `10` | The error, in percentage points, still counted as a correct prediction: the confidence is the probability of staying within it. |
 | `slice_load_window_seconds` | `300` | Period of the slice load statistics when the consumer gives no `startTs`/`endTs`: the last N seconds. |
 | `collection_interval_seconds` | `10` | Collector cadence |
 | `supi_regex` | `imsi-(\d{15})` | SUPI extraction pattern (Open5GS v2.7.6) |

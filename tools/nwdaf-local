@@ -113,6 +113,10 @@ check "NUM_OF_UE for one TA (AMF UE list)" "${CLI[@]}" get NETWORK_PERFORMANCE -
 EXPECT='.sliceLoadLevelInfos[0].loadLevelInformation >= 1'
 check "SLICE_LOAD_LEVEL" "${CLI[@]}" get SLICE_LOAD_LEVEL --any-slice
 
+EXPECT='.nsiLoadLevelInfos[0].confidence != null and .start != null and .expiry != null'
+check "NSI_LOAD_LEVEL prediction (I-13)" "${CLI[@]}" get NSI_LOAD_LEVEL --snssai 1 \
+    --start "$(date -u -d '+60 sec' +%Y-%m-%dT%H:%M:%SZ)" --end "$(date -u -d '+120 sec' +%Y-%m-%dT%H:%M:%SZ)"
+
 EXPECT='(.ueMobs | length) >= 1 and .ueMobs[0].locInfos[0].loc.nrLocation.tai.tac != null'
 check "UE_MOBILITY for a SUPI" "${CLI[@]}" get UE_MOBILITY --supi imsi-999700000000001
 

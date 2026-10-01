@@ -164,6 +164,14 @@ NwdafConfig NwdafConfig::load(const std::string& yaml_path) {
     if (cfg.ue_location_history_seconds <= 0)
         throw std::runtime_error("ue_location_history_seconds must be positive");
 
+    cfg.prediction_horizon_seconds = n["prediction_horizon_seconds"]
+        ? n["prediction_horizon_seconds"].as<int>() : 900;
+    cfg.prediction_min_samples = n["prediction_min_samples"] ? n["prediction_min_samples"].as<int>() : 10;
+    cfg.prediction_tolerance   = n["prediction_tolerance"] ? n["prediction_tolerance"].as<double>() : 10.0;
+    if (cfg.prediction_horizon_seconds < 0 || cfg.prediction_min_samples < 2 || cfg.prediction_tolerance <= 0)
+        throw std::runtime_error("prediction_horizon_seconds must be >= 0, prediction_min_samples >= 2 "
+                                 "and prediction_tolerance > 0");
+
     cfg.slice_load_window_seconds = n["slice_load_window_seconds"]
         ? n["slice_load_window_seconds"].as<int>() : 300;
     if (cfg.slice_load_window_seconds <= 0)

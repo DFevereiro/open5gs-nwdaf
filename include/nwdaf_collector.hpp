@@ -62,6 +62,12 @@ struct NfMetric {
     std::string load_label;
 };
 
+// H1.7: the NF loads of one collection tick, kept for predictions (I-13).
+struct NwdafNfLoadScrape {
+    std::chrono::system_clock::time_point at;
+    std::vector<NfMetric> metrics;
+};
+
 // H1.1: one NF's Prometheus metrics endpoint (OAM input).
 struct NwdafOamSource {
     std::string nf_type;
@@ -109,6 +115,8 @@ public:
     std::vector<SmfEvent>         getRecentSmfEvents(int n = 100) const;
     std::vector<ThroughputSample> getThroughputHistory(int n = 60) const;
     std::vector<NfMetric>         getCachedNfMetrics() const;
+    // H1.7: the NF loads of the last ticks (at most throughput_history_size).
+    std::vector<NwdafNfLoadScrape> getNfLoadHistory() const;
     // H1.1: the configured metrics endpoints as last scraped by bgLoop, and
     // the successful scrapes of one NF type (at most throughput_history_size).
     std::vector<NwdafOamSource>   getOamSources() const;
@@ -153,6 +161,7 @@ private:
     std::deque<SmfEvent>         smf_events_;
     std::deque<ThroughputSample> throughput_history_;
     std::vector<NfMetric>        nf_metrics_;
+    std::deque<NwdafNfLoadScrape> nf_history_;   // H1.7
     std::map<std::string, NwdafOamSource>             oam_sources_;   // H1.1
     std::map<std::string, std::deque<NwdafOamScrape>> oam_history_;   // H1.1
     std::shared_ptr<NwdafUeLocationTracker> ue_locations_;            // H1.1, own lock

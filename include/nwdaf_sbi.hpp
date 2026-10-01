@@ -23,7 +23,7 @@
 //
 // Rules taken from the specification prose are pinned, with their clauses, in
 // docs/3gpp-rel18-compliance.md Appendix A; interpretations are recorded
-// there as I-1..I-12.
+// there as I-1..I-13.
 
 struct SbiRequest {
     std::string method;                              // "GET", "POST", ...
@@ -45,6 +45,7 @@ struct NwdafReportInputs {
     std::vector<NwdafNfStatusObservation>  statuses;
     std::vector<NwdafOamScrape>            amf_oam, smf_oam;   // H1.2
     std::shared_ptr<const NwdafUeLocationTracker> ue_locations;   // H1.1; null = none
+    std::vector<NwdafNfLoadScrape>         nf_history;         // H1.7: for NF_LOAD predictions
 };
 
 struct SbiResponse {
@@ -118,22 +119,25 @@ public:
 
     // Interpret the NF_LOAD inputs (TS 29.520 V18.14.0 §4.2.2.2.2 / §4.3.2.2).
     // `target`, `filter` and `req` may be null. `*_at` label where each came
-    // from, for the error. Fills `query` when nullopt is returned.
+    // from, for the error. Fills `query` when nullopt is returned. A future
+    // analytics target period asks for a prediction (I-13).
     static std::optional<Rejection> interpretNfLoad(
         const nlohmann::json* target, const std::string& target_at,
         const nlohmann::json& filter, const std::string& filter_at,
         const nlohmann::json* req, const std::string& req_at,
-        Nwdaf3gppAdapter::NfLoadQuery& query);
+        const NwdafConfig& config, Nwdaf3gppAdapter::NfLoadQuery& query);
 
     // H1.2: interpret the slice load inputs of SLICE_LOAD_LEVEL / NSI_LOAD_LEVEL
     // (TS 29.520 V18.14.0 §4.2.2.2.2, §4.3.2.2). `filter` is the AnalyticsInfo
     // event-filter or the EventSubscription itself (null when absent); `req`
-    // the reporting requirements (may be null).
+    // the reporting requirements (may be null). NSI_LOAD_LEVEL is predicted
+    // for a future period; SLICE_LOAD_LEVEL is not, since its Stage 3 type
+    // has no confidence (I-13).
     static std::optional<Rejection> interpretSliceLoad(
         const std::string& event,
         const nlohmann::json* filter, const std::string& filter_at,
         const nlohmann::json* req, const std::string& req_at,
-        Nwdaf3gppAdapter::SliceQuery& query);
+        const NwdafConfig& config, Nwdaf3gppAdapter::SliceQuery& query);
 
     // H1.4: interpret the NETWORK_PERFORMANCE inputs (TS 29.520 V18.14.0
     // §4.2.2.2.2, §4.3.2.2): target UE (anyUe only), networkArea (any TAs

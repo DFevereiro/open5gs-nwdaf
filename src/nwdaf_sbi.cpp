@@ -132,19 +132,62 @@ std::optional<SbiResponse> subscriptionRejection(const Rejection& r, const Nwdaf
 
 const json* member(const json& j, const char* key) { return j.contains(key) ? &j[key] : nullptr; }
 
+// H1.7 (I-13): the analytics target period (startTs / endTs). A period in
+// the future asks for a prediction: served when `why_not` is empty, for a
+// period that ends within prediction_horizon_seconds. `prediction` is set
+// accordingly; a past period is left to the caller.
+using TimePoint = std::chrono::system_clock::time_point;
+std::optional<Rejection> targetPeriod(const json& req, const std::string& req_at, const std::string& why_not,
+                                      const NwdafConfig& config, std::optional<TimePoint>& from,
+                                      std::optional<TimePoint>& to, bool& prediction) {
+    const auto now = std::chrono::system_clock::now();
+    std::optional<TimePoint> start, end;
+    for (const std::string k : {"startTs", "endTs"}) {
+        if (!req.contains(k)) continue;
+        auto t = NwdafSbiService::parseDateTime(req[k].get<std::string>());
+        if (!t) return Rejection{Rejection::Unsupported, req_at, "/" + k + ": not an RFC 3339 date-time"};
+        (k == "startTs" ? start : end) = *t;
+    }
+    prediction = (start && *start > now) || (end && *end > now);
+    if (!prediction) { from = start; to = end; return std::nullopt; }
+    if (!why_not.empty()) return Rejection{Rejection::Unsupported, req_at, why_not};
+    // A period already under way mixes statistics and prediction; rejected
+    // before this at request time (BOTH_STAT_PRED_NOT_ALLOWED), and no longer
+    // predicted once it has started.
+    if (start && *start <= now)
+        return Rejection{Rejection::Unsupported, req_at, "the period has started: it is no longer a prediction"};
+    const TimePoint s = start.value_or(now), e = end.value_or(s);
+    if (e < s) return Rejection{Rejection::Unsupported, req_at, "endTs is before startTs"};
+    if (e > now + std::chrono::seconds(config.prediction_horizon_seconds))
+        return Rejection{Rejection::Unsupported, req_at,
+                         "predictions reach at most " + std::to_string(config.prediction_horizon_seconds) +
+                         " s ahead (prediction_horizon_seconds, I-13)"};
+    from = s;
+    to = e;
+    return std::nullopt;
+}
+
+// A prediction's AnalyticsData / EventNotification carries the predicted
+// period as its validity period (TS 23.288 §6.5.3: "The predictions are
+// provided with a Validity Period").
+void predictionStamps(json& data, TimePoint from, TimePoint to) {
+    data["start"]  = NwdafSbiService::formatDateTime(from);
+    data["expiry"] = NwdafSbiService::formatDateTime(to);
+}
+
 // The queries of an accepted EventSubscription (validated when it was created).
-std::optional<Nwdaf3gppAdapter::NfLoadQuery> nfLoadQueryOf(const json& es) {
+std::optional<Nwdaf3gppAdapter::NfLoadQuery> nfLoadQueryOf(const json& es, const NwdafConfig& config) {
     Nwdaf3gppAdapter::NfLoadQuery q;
     if (NwdafSbiService::interpretNfLoad(member(es, "tgtUe"), "tgtUe", es, "",
-                                         member(es, "extraReportReq"), "extraReportReq", q))
+                                         member(es, "extraReportReq"), "extraReportReq", config, q))
         return std::nullopt;
     return q;
 }
 
-std::optional<Nwdaf3gppAdapter::SliceQuery> sliceQueryOf(const json& es) {
+std::optional<Nwdaf3gppAdapter::SliceQuery> sliceQueryOf(const json& es, const NwdafConfig& config) {
     Nwdaf3gppAdapter::SliceQuery q;
     if (NwdafSbiService::interpretSliceLoad(es.value("event", ""), &es, "",
-                                            member(es, "extraReportReq"), "extraReportReq", q))
+                                            member(es, "extraReportReq"), "extraReportReq", config, q))
         return std::nullopt;
     return q;
 }
@@ -385,7 +428,7 @@ std::optional<NwdafSbiService::Rejection> NwdafSbiService::interpretNfLoad(
     const json* target, const std::string& target_at,
     const json& filter, const std::string& filter_at,
     const json* req, const std::string& req_at,
-    Nwdaf3gppAdapter::NfLoadQuery& query)
+    const NwdafConfig& config, Nwdaf3gppAdapter::NfLoadQuery& query)
 {
     // Target UE(s): "shall provide … supis or anyUe" (§4.2.2.2.2, §4.3.2.2).
     // Only the network-wide form is implemented: which AMF/SMF instance
@@ -446,23 +489,17 @@ std::optional<NwdafSbiService::Rejection> NwdafSbiService::interpretNfLoad(
                                  "/" + k + ": not supported for NF_LOAD by this NWDAF"};
             spdlog::debug("NF_LOAD: ignoring unknown {}/{}", req_at, k);
         }
-        // Analytics target period. The collectors hold the current NF load
-        // only: no history for past statistics, no NF-load prediction.
-        const auto now = std::chrono::system_clock::now();
-        bool future = false, past = false;
-        for (const char* k : {"startTs", "endTs"}) {
-            if (!req->contains(k)) continue;
-            auto t = parseDateTime((*req)[k].get<std::string>());
-            if (!t) return Rejection{Rejection::Unsupported, req_at,
-                                     std::string("/") + k + ": not an RFC 3339 date-time"};
-            (*t > now ? future : past) = true;
-        }
-        if (future)
-            return Rejection{Rejection::Unsupported, req_at,
-                             "NF_LOAD predictions are not supported by this NWDAF"};
-        if (past)
+        // Analytics target period: a future one is predicted from the CPU
+        // history (I-13); past statistics aren't held, only the current load.
+        std::optional<TimePoint> from, to;
+        if (auto rej = targetPeriod(*req, req_at, "", config, from, to, query.prediction)) return rej;
+        if (query.prediction) {
+            query.from = from;
+            query.to = to;
+        } else if (from || to) {
             return Rejection{Rejection::UnavailableData, req_at,
                              "past NF_LOAD statistics are not held; only the current load is"};
+        }
     }
     return std::nullopt;
 }
@@ -476,17 +513,20 @@ SbiResponse NwdafSbiService::nfLoadInfo(std::map<std::string, json>& values,
                                values.count("event-filter") ? values["event-filter"] : no_filter,
                                "event-filter",
                                values.count("ana-req") ? &values["ana-req"] : nullptr, "ana-req",
-                               query);
+                               config_, query);
     if (rej) return queryRejection(*rej, local);
 
-    const json infos = Nwdaf3gppAdapter::nfLoadLevelInfos(engine_.getCurrentNfMetrics(),
-                                                          nf_monitor_->ids(),
-                                                          nf_monitor_->statuses(), query);
+    const json infos = query.prediction
+        ? Nwdaf3gppAdapter::nfLoadPredictions(config_, engine_.getNfLoadHistory(), nf_monitor_->ids(), query,
+                                              std::chrono::system_clock::now())
+        : Nwdaf3gppAdapter::nfLoadLevelInfos(engine_.getCurrentNfMetrics(), nf_monitor_->ids(),
+                                             nf_monitor_->statuses(), query);
     // §4.3.2.2: "If the requested NWDAF Analytics data does not exist, the
     // NWDAF shall respond with 204 No Content".
     if (infos.empty()) return {204, "", "", {}};
 
     json data = timeStamps(config_);
+    if (query.prediction) predictionStamps(data, *query.from, *query.to);
     data["nfLoadLevelInfos"] = infos;
     if (consumer) data["suppFeat"] = local.intersect(*consumer).toHex();
     return {200, "application/json", data.dump(), {}};
@@ -498,7 +538,7 @@ std::optional<NwdafSbiService::Rejection> NwdafSbiService::interpretSliceLoad(
     const std::string& event,
     const json* filter, const std::string& filter_at,
     const json* req, const std::string& req_at,
-    Nwdaf3gppAdapter::SliceQuery& query)
+    const NwdafConfig& config, Nwdaf3gppAdapter::SliceQuery& query)
 {
     const bool nsi = event == "NSI_LOAD_LEVEL";
     const char* slices = nsi ? "nsiIdInfos" : "snssais";
@@ -532,17 +572,12 @@ std::optional<NwdafSbiService::Rejection> NwdafSbiService::interpretSliceLoad(
         if (filter->contains(k)) spdlog::info("{}: ignoring {}/{} (feature not supported, I-2)", event, filter_at, k);
 
     if (req) {
-        const auto now = std::chrono::system_clock::now();
-        for (const char* k : {"startTs", "endTs"}) {
-            if (!req->contains(k)) continue;
-            auto t = parseDateTime((*req)[k].get<std::string>());
-            if (!t) return Rejection{Rejection::Unsupported, req_at,
-                                     std::string("/") + k + ": not an RFC 3339 date-time"};
-            if (*t > now)
-                return Rejection{Rejection::Unsupported, req_at,
-                                 event + " predictions are not supported by this NWDAF"};
-            (std::string(k) == "startTs" ? query.from : query.to) = *t;
-        }
+        // I-13: SliceLoadLevelInformation has no confidence, which Table
+        // 6.3.3A-4 requires of a prediction.
+        const std::string why_not = nsi ? "" :
+            "SLICE_LOAD_LEVEL predictions are not supported: SliceLoadLevelInformation has no confidence (I-13)";
+        if (auto rej = targetPeriod(*req, req_at, why_not, config, query.from, query.to, query.prediction))
+            return rej;
         for (auto it = req->begin(); it != req->end(); ++it)
             if (it.key() != "startTs" && it.key() != "endTs")
                 spdlog::debug("{}: ignoring {}/{}", event, req_at, it.key());
@@ -796,6 +831,7 @@ NwdafReportInputs NwdafSbiService::gatherInputs(const NwdafAnalyticsEngine& engi
     in.amf_oam         = engine.getOamHistory("AMF");
     in.smf_oam         = engine.getOamHistory("SMF");
     in.ue_locations    = engine.getUeLocations();
+    in.nf_history      = engine.getNfLoadHistory();
     return in;
 }
 
@@ -809,9 +845,21 @@ SbiResponse NwdafSbiService::sliceLoadInfo(const std::string& event,
     const NwdafReportInputs in = inputs();
     auto rej = interpretSliceLoad(event, values.count("event-filter") ? &values["event-filter"] : nullptr,
                                   "event-filter",
-                                  values.count("ana-req") ? &values["ana-req"] : nullptr, "ana-req", query);
-    if (!rej) rej = sliceHistoryCovers(query, in, config_, "ana-req");
+                                  values.count("ana-req") ? &values["ana-req"] : nullptr, "ana-req",
+                                  config_, query);
+    if (!rej && !query.prediction) rej = sliceHistoryCovers(query, in, config_, "ana-req");
     if (rej) return queryRejection(*rej, local);
+
+    if (query.prediction) {   // NSI_LOAD_LEVEL only (I-13)
+        const json infos = Nwdaf3gppAdapter::nsiLoadPredictions(config_, query, in.amf_oam, in.smf_oam,
+                                                                std::chrono::system_clock::now());
+        if (infos.empty()) return {204, "", "", {}};
+        json data = timeStamps(config_);
+        predictionStamps(data, *query.from, *query.to);
+        data["nsiLoadLevelInfos"] = infos;
+        if (consumer) data["suppFeat"] = local.intersect(*consumer).toHex();
+        return {200, "application/json", data.dump(), {}};
+    }
 
     const auto loads = Nwdaf3gppAdapter::sliceLoads(config_, query, in.amf_oam, in.smf_oam,
                                                     std::chrono::system_clock::now());
@@ -950,8 +998,8 @@ std::vector<json> NwdafSbiService::thresholdReports(const json& es, const NwdafR
     head["event"] = event;
 
     if (event == "NF_LOAD") {
-        const auto query = nfLoadQueryOf(es);
-        if (!query) return out;
+        const auto query = nfLoadQueryOf(es, config);
+        if (!query || query->prediction) return out;   // no thresholds on predictions (I-13)
         std::vector<int> levels;
         for (const auto& t : es.value("nfLoadLvlThds", json::array())) levels.push_back(t.value("nfCpuUsage", 0));
         // TS 23.288 §6.5.1: one threshold for all matching NFs; reported when
@@ -994,8 +1042,8 @@ std::vector<json> NwdafSbiService::thresholdReports(const json& es, const NwdafR
     }
 
     if (event == "SLICE_LOAD_LEVEL" || event == "NSI_LOAD_LEVEL") {
-        const auto query = sliceQueryOf(es);
-        if (!query) return out;
+        const auto query = sliceQueryOf(es, config);
+        if (!query || query->prediction) return out;   // no thresholds on predictions (I-13)
         const bool nsi = event == "NSI_LOAD_LEVEL";
         const auto per_slice = nsi ? nsiThresholds(es) : std::map<std::string, int>{};
         std::vector<NwdafSliceLoad> hits;
@@ -1131,11 +1179,15 @@ NwdafSbiService::evaluateSubscription(const SbiRequest& req, SubscriptionOutcome
         if (event == "NF_LOAD") {
             Nwdaf3gppAdapter::NfLoadQuery query;
             rej = interpretNfLoad(member(es, "tgtUe"), at + "/tgtUe", es, at,
-                                  member(es, "extraReportReq"), req_at, query);
+                                  member(es, "extraReportReq"), req_at, config_, query);
+            if (!rej && query.prediction && thresholdMode(evt_req, es))
+                rej = Rejection{Rejection::Unsupported, req_at, "THRESHOLD reporting on predictions is not supported (I-13)"};
         } else if (event == "SLICE_LOAD_LEVEL" || event == "NSI_LOAD_LEVEL") {
             Nwdaf3gppAdapter::SliceQuery query;
-            rej = interpretSliceLoad(event, &es, at, member(es, "extraReportReq"), req_at, query);
-            if (!rej && query.from) {
+            rej = interpretSliceLoad(event, &es, at, member(es, "extraReportReq"), req_at, config_, query);
+            if (!rej && query.prediction && thresholdMode(evt_req, es))
+                rej = Rejection{Rejection::Unsupported, req_at, "THRESHOLD reporting on predictions is not supported (I-13)"};
+            if (!rej && query.from && !query.prediction) {
                 if (!in) in = inputs();
                 rej = sliceHistoryCovers(query, *in, config_, req_at);
             }
@@ -1206,15 +1258,29 @@ std::vector<json> NwdafSbiService::eventReports(const json& es, const NwdafRepor
     head["event"] = event;
     std::vector<json> out;
     if (event == "NF_LOAD") {
-        const auto query = nfLoadQueryOf(es);
-        if (!query) return out;   // cannot happen for an accepted event
-        json infos = Nwdaf3gppAdapter::nfLoadLevelInfos(in.metrics, in.nf_instance_ids, in.statuses, *query);
+        // A predicted period that has started no longer yields a query: no report (I-13).
+        const auto query = nfLoadQueryOf(es, config);
+        if (!query) return out;
+        const auto now = std::chrono::system_clock::now();
+        json infos = query->prediction
+            ? Nwdaf3gppAdapter::nfLoadPredictions(config, in.nf_history, in.nf_instance_ids, *query, now)
+            : Nwdaf3gppAdapter::nfLoadLevelInfos(in.metrics, in.nf_instance_ids, in.statuses, *query);
         if (infos.empty()) return out;
+        if (query->prediction) predictionStamps(head, *query->from, *query->to);
         head["nfLoadLevelInfos"] = infos;
         out.push_back(head);
     } else if (event == "SLICE_LOAD_LEVEL" || event == "NSI_LOAD_LEVEL") {
-        const auto query = sliceQueryOf(es);
-        if (!query) return out;   // cannot happen for an accepted event
+        const auto query = sliceQueryOf(es, config);
+        if (!query) return out;
+        if (query->prediction) {   // NSI_LOAD_LEVEL only (I-13)
+            json infos = Nwdaf3gppAdapter::nsiLoadPredictions(config, *query, in.amf_oam, in.smf_oam,
+                                                              std::chrono::system_clock::now());
+            if (infos.empty()) return out;
+            predictionStamps(head, *query->from, *query->to);
+            head["nsiLoadLevelInfos"] = infos;
+            out.push_back(head);
+            return out;
+        }
         return sliceNotifications(Nwdaf3gppAdapter::sliceLoads(config, *query, in.amf_oam, in.smf_oam,
                                                                std::chrono::system_clock::now()),
                                   head);

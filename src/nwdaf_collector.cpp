@@ -595,6 +595,11 @@ std::vector<NwdafOamSource> NwdafCollector::getOamSources() const {
     return out;
 }
 
+std::vector<NwdafNfLoadScrape> NwdafCollector::getNfLoadHistory() const {
+    std::lock_guard<std::mutex> lk(mutex_);
+    return {nf_history_.begin(), nf_history_.end()};
+}
+
 std::vector<NwdafOamScrape> NwdafCollector::getOamHistory(const std::string& nf_type) const {
     std::lock_guard<std::mutex> lk(mutex_);
     const auto it = oam_history_.find(nf_type);
@@ -745,6 +750,8 @@ void NwdafCollector::bgLoop() {
                     }
                 }
                 nf_metrics_ = nf;
+                nf_history_.push_back({std::chrono::system_clock::now(), nf});
+                while ((int)nf_history_.size() > config_.throughput_history_size) nf_history_.pop_front();
                 // H1.1: a failed scrape keeps the last samples, marked down;
                 // only successful scrapes enter the history.
                 for (auto& src : oam) {

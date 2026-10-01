@@ -82,6 +82,12 @@ nwdaf:
   # ue_mobility_window_seconds: 3600     # statistics period without startTs/endTs
   # ue_location_history_seconds: 86400   # kept in memory only
 
+  # Predictions of NF_LOAD and NSI_LOAD_LEVEL for a future startTs/endTs
+  # (interpretation I-13): Holt's linear trend over the collected history.
+  # prediction_horizon_seconds: 900   # how far ahead; 0 = no predictions
+  # prediction_min_samples: 10        # fewer: confidence 0
+  # prediction_tolerance: 10          # points of error counted as correct
+
   # AMF journald log parsing — Open5GS v2.7.6 uses "imsi-XXXXXXXXXXXXXXX"
   # Adjust supi_regex for earlier versions if needed
   amf_journal_lines: 500

@@ -119,6 +119,81 @@ json Nwdaf3gppAdapter::nsiLoadLevelInfos(const std::vector<NwdafSliceLoad>& load
     return out;
 }
 
+// ── H1.7: predictions (I-13) ────────────────────────────────────────────────
+
+namespace {
+
+double epochSeconds(std::chrono::system_clock::time_point t) {
+    return std::chrono::duration<double>(t.time_since_epoch()).count();
+}
+
+}  // namespace
+
+HoltForecaster::Params Nwdaf3gppAdapter::forecastParams(const NwdafConfig& cfg) {
+    HoltForecaster::Params p;
+    p.alpha        = cfg.ewma_alpha;
+    p.step_seconds = cfg.collection_interval_seconds;
+    p.tolerance    = cfg.prediction_tolerance;
+    p.min_samples  = static_cast<size_t>(cfg.prediction_min_samples);
+    return p;
+}
+
+json Nwdaf3gppAdapter::nfLoadPredictions(const NwdafConfig& cfg, const std::vector<NwdafNfLoadScrape>& history,
+                                         const std::map<std::string, std::string>& nf_instance_ids,
+                                         const NfLoadQuery& query, std::chrono::system_clock::time_point now) {
+    const auto from = query.from.value_or(now);
+    const auto to   = query.to.value_or(from);
+    // The CPU series of each NF type, from the ticks it ran with a PID (I-5).
+    std::vector<std::string> order;
+    std::map<std::string, std::vector<std::pair<double, double>>> series;
+    for (const auto& tick : history)
+        for (const auto& m : tick.metrics) {
+            if (m.status != "active" || m.pid <= 0) continue;
+            auto& s = series[m.nf_type];
+            if (s.empty()) order.push_back(m.nf_type);
+            s.push_back({epochSeconds(tick.at), std::clamp(m.load_pct, 0.0, 100.0)});
+        }
+    json out = json::array();
+    for (const auto& type : order) {
+        const auto id = nf_instance_ids.find(type);
+        if (id == nf_instance_ids.end()) continue;
+        if (!query.nf_types.empty() && !query.nf_types.count(type)) continue;
+        if (!query.nf_instance_ids.empty() && !query.nf_instance_ids.count(id->second)) continue;
+        if (query.max_objects && out.size() >= *query.max_objects) break;
+        const auto f = HoltForecaster::forecast(series[type], epochSeconds(from), epochSeconds(to), forecastParams(cfg));
+        if (!f) continue;
+        out.push_back({{"nfType", type}, {"nfInstanceId", id->second},
+                       {"nfCpuUsage", static_cast<int>(std::lround(f->value))}, {"confidence", f->confidence}});
+    }
+    return out;
+}
+
+json Nwdaf3gppAdapter::nsiLoadPredictions(const NwdafConfig& cfg, const SliceQuery& query,
+                                          const std::vector<NwdafOamScrape>& amf,
+                                          const std::vector<NwdafOamScrape>& smf,
+                                          std::chrono::system_clock::time_point now) {
+    const auto from = query.from.value_or(now);
+    const auto to   = query.to.value_or(from);
+    const auto half = std::chrono::milliseconds(cfg.collection_interval_seconds * 500);
+    json out = json::array();
+    for (const auto& slice : cfg.slice_capacity) {
+        if (!query.any && !query.keys.count(slice.key())) continue;
+        // The slice's load level at each scrape (I-9): the AMF's when UEs
+        // count, else the SMF's, each with the other NF's scrape of that tick.
+        const auto& ticks = slice.max_ues > 0 ? amf : smf;
+        std::vector<std::pair<double, double>> series;
+        for (const auto& t : ticks)
+            if (auto load = NwdafSliceLoadCalculator::compute(slice, NwdafSliceLoadCalculator::plmnLabel(cfg),
+                                                              amf, smf, t.at - half, t.at + half))
+                series.push_back({epochSeconds(t.at), static_cast<double>(load->load_level)});
+        const auto f = HoltForecaster::forecast(series, epochSeconds(from), epochSeconds(to), forecastParams(cfg));
+        if (!f) continue;
+        out.push_back({{"loadLevelInformation", static_cast<int>(std::lround(f->value))},
+                       {"snssai", snssai(slice)}, {"confidence", f->confidence}});
+    }
+    return out;
+}
+
 // ── H1.4: NETWORK_PERFORMANCE (I-11) ────────────────────────────────────────
 
 bool Nwdaf3gppAdapter::nwPerfTypeAvailable(const std::string& type, const NwdafConfig& cfg) {

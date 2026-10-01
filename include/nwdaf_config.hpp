@@ -81,6 +81,12 @@ public:
     int ue_mobility_window_seconds = 3600;
     // H1.1: how long UE location history is kept (memory only).
     int ue_location_history_seconds = 86400;
+    // H1.7: predictions (I-13). How far ahead the end of a predicted period
+    // may lie; the samples below which the confidence is 0; and the error,
+    // in percentage points, still counted as a correct prediction.
+    int    prediction_horizon_seconds = 900;
+    int    prediction_min_samples     = 10;
+    double prediction_tolerance       = 10.0;
     int    throughput_history_size      = 360;
     int    collection_interval_seconds  = 10;
     int    amf_journal_lines            = 500;

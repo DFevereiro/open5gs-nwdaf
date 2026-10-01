@@ -165,6 +165,10 @@ std::vector<NwdafOamScrape> NwdafAnalyticsEngine::getOamHistory(const std::strin
     return collector_.getOamHistory(nf_type);
 }
 
+std::vector<NwdafNfLoadScrape> NwdafAnalyticsEngine::getNfLoadHistory() const {
+    return collector_.getNfLoadHistory();
+}
+
 std::shared_ptr<const NwdafUeLocationTracker> NwdafAnalyticsEngine::getUeLocations() const {
     return collector_.ueLocations();
 }

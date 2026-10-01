@@ -4,6 +4,7 @@
 #include "nwdaf_slice_load.hpp"
 #include "nwdaf_network_performance.hpp"
 #include "nwdaf_ue_location.hpp"
+#include "ml/holt_forecaster.hpp"
 #include <chrono>
 #include <nlohmann/json.hpp>
 #include <cstddef>
@@ -32,6 +33,9 @@ public:
         std::set<std::string> nf_instance_ids;   // empty = no filter
         std::set<std::string> nf_types;          // empty = no filter
         std::optional<size_t> max_objects;
+        // H1.7: a future analytics target period asks for a prediction (I-13).
+        bool prediction = false;
+        std::optional<std::chrono::system_clock::time_point> from, to;
     };
 
     // NfLoadLevelInformation for every NF instance that has a load measure
@@ -60,6 +64,7 @@ public:
         bool any = false;                   // anySlice
         std::set<std::string> keys;         // requested S-NSSAIs, as NwdafSliceCapacity::key()
         std::optional<std::chrono::system_clock::time_point> from, to;   // default: the last slice_load_window_seconds
+        bool prediction = false;            // H1.7: [from, to] is in the future (I-13)
     };
 
     // TS 29.571 Snssai ↔ NwdafSliceCapacity::key() ("1-000001", "1").
@@ -82,6 +87,22 @@ public:
     // NsiLoadLevelInfo per slice, without nsiId (no network slice instances)
     // and without the NsiLoadExt attributes.
     static nlohmann::json nsiLoadLevelInfos(const std::vector<NwdafSliceLoad>& loads);
+
+    // H1.7: predictions (I-13). The forecaster settings from the configuration.
+    static HoltForecaster::Params forecastParams(const NwdafConfig& cfg);
+    // NfLoadLevelInformation predictions: nfCpuUsage and confidence per NF
+    // instance with a CPU history, for [query.from, query.to].
+    static nlohmann::json nfLoadPredictions(const NwdafConfig& cfg,
+                                            const std::vector<NwdafNfLoadScrape>& history,
+                                            const std::map<std::string, std::string>& nf_instance_ids,
+                                            const NfLoadQuery& query,
+                                            std::chrono::system_clock::time_point now);
+    // NsiLoadLevelInfo predictions: loadLevelInformation and confidence per
+    // configured slice the query selects, from its load level per scrape.
+    static nlohmann::json nsiLoadPredictions(const NwdafConfig& cfg, const SliceQuery& query,
+                                             const std::vector<NwdafOamScrape>& amf,
+                                             const std::vector<NwdafOamScrape>& smf,
+                                             std::chrono::system_clock::time_point now);
 
     // H1.4: which network performance types and period a request covers.
     struct NwPerfQuery {

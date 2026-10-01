@@ -31,7 +31,7 @@ This plan is organized into **three horizons** and is explicitly dual-lens: ever
 ## 1a. Execution status
 
 Tracked on the [5G/6G enhancement plan project board](https://github.com/users/cem8kaya/projects/5).
-Last updated **2026-09-30** (branch `rel18-compliance`; last release `v1.1.0`).
+Last updated **2026-10-01** (branch `rel18-compliance`; last release `v1.1.0`).
 
 | Item | Issue | Status |
 |---|---|---|
@@ -41,7 +41,7 @@ Last updated **2026-09-30** (branch `rel18-compliance`; last release `v1.1.0`).
 | H1.4 — Rel-17/18 catalogue | [#26](https://github.com/cem8kaya/open5gs-nwdaf/issues/26) | **Partial**: `SM_CONGESTION`, `REDUNDANT_TRANSMISSION` (Rel-18 name `RED_TRANS_EXP`) and `DISPERSION` shipped on the operator API; `NETWORK_PERFORMANCE` (`NUM_OF_UE`, per area from the AMF's UE list; `SESS_SUCC_RATIO`) on the 3GPP interfaces since 2026-09-30 (I-11); `DN_PERFORMANCE`, `USER_DATA_CONGESTION` and `WLAN_PERFORMANCE` are blocked on H1.1–H1.3 · *adjusted for Rel-18 (§3a)* |
 | H1.5 — MOS / service-experience E-model | [#27](https://github.com/cem8kaya/open5gs-nwdaf/issues/27) | **Done** |
 | H1.6 — OpenAPI 3.0 + conformance in CI | [#28](https://github.com/cem8kaya/open5gs-nwdaf/issues/28) | **Done** for the operator API · *extended for Rel-18: official-schema conformance (§3a)* |
-| H1.7 — 3GPP Nnwdaf SBI conformance (Rel-18) | — | **Done for the M1 scope**: 3GPP resources, official-schema validation, supported features, failure semantics, and NF_LOAD with subscriptions and notifications. Since then: SLICE_LOAD_LEVEL / NSI_LOAD_LEVEL (H1.2) and THRESHOLD / ON_EVENT_DETECTION reporting (2026-09-30, I-10). Further IDs are added here as their inputs allow |
+| H1.7 — 3GPP Nnwdaf SBI conformance (Rel-18) | — | **Done for the M1 scope**: 3GPP resources, official-schema validation, supported features, failure semantics, and NF_LOAD with subscriptions and notifications. Since then: SLICE_LOAD_LEVEL / NSI_LOAD_LEVEL (H1.2), THRESHOLD / ON_EVENT_DETECTION reporting (2026-09-30, I-10), and predictions of NF_LOAD and NSI_LOAD_LEVEL with a confidence (2026-10-01, I-13). Further IDs are added here as their inputs allow |
 | H1.8 — HTTP/2 SBI transport + compliance profile | — | **Done**: nghttp2 server and libcurl client, the rel18-sbi and dev-legacy profiles, CI over HTTP/2; validated against the Open5GS v2.8.0 NRF |
 | H1.9 — Truthful Rel-18 NRF profile, lifecycle, discovery | — | **Done**: truthful profile, NFRegister, heartbeat with `404` re-registration, NFDeregister, and NF instance IDs plus NF_LOAD `nfStatus` from NRF list/profile retrieval, all validated against the Open5GS v2.8.0 NRF. (NFDiscover was replaced on 2026-09-29: Open5GS NFs don't allow NWDAF, so the NRF hides them from it.) |
 | H1.10 — SBI security: mTLS, OAuth2 token validation, NRF client TLS | — | **Done**: mTLS on both listeners; OAuth 2.0 access-token validation per TS 33.501 §13.4.1 with pluggable key sources. Open5GS doesn't implement OAuth 2.0, so it stays off there. |
@@ -300,7 +300,7 @@ Add a monitor that runs on the collection cadence:
 - **Auto-retrain trigger:** replace the purely manual `POST /train` with a drift-or-schedule trigger (keep manual as override). Emit a Prometheus `nwdaf_model_drift_psi` gauge.
 
 ### H2.4 — Seasonality-aware forecasting **[DA]**
-EWMA has no notion of daily/weekly traffic cycles. Add a **Holt-Winters (triple-exponential) forecaster** — still pure C++, still dependency-light — for `NF_LOAD` and `QoS_SUSTAINABILITY`. Optionally add an **ONNX Runtime** inference path (build-flag-gated, degrades gracefully like the other optional deps) so externally-trained GRU/LSTM/Transformer models can be dropped in without a Python runtime at serve time.
+EWMA has no notion of daily/weekly traffic cycles. Holt's linear-trend forecaster (`src/ml/holt_forecaster.cpp`) already serves the 3GPP predictions (I-13), over the short collected history; extend it to a **Holt-Winters (triple-exponential) forecaster**, still pure C++ and dependency-light, with a seasonal term for `NF_LOAD` and `QoS_SUSTAINABILITY` once ADRF-length history (H2.5) exists. Optionally add an **ONNX Runtime** inference path (build-flag-gated, degrades gracefully like the other optional deps) so externally-trained GRU/LSTM/Transformer models can be dropped in without a Python runtime at serve time.
 
 ### H2.5 — ADRF + data lake / feature store **[DA]**
 - Implement **Parquet export** (roadmap item) → an **Analytics Data Repository Function (ADRF, Rel-17)** so historical data survives beyond the 360-sample ring and can feed offline training.
